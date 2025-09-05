@@ -111,12 +111,27 @@
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5><i class="fas fa-chart-line"></i> Real-Time Sentiment Chart</h5>
-                        <small class="text-muted">Updates automatically with new data</small>
+                        <div class="d-flex align-items-center">
+                            <select class="form-select form-select-sm me-2" id="chartTimeRange" onchange="changeChartTimeRange()" style="width: auto;">
+                                <option value="5m">5 min</option>
+                                <option value="15m">15 min</option>
+                                <option value="1h" selected>1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="1d">1 day</option>
+                                <option value="15d">15 days</option>
+                                <option value="30d">30 days</option>
+                                <option value="ytd">YTD</option>
+                                <option value="1y">1 year</option>
+                                <option value="3y">3 years</option>
+                                <option value="all">All time</option>
+                            </select>
+                            <small class="text-muted">Updates automatically</small>
+                        </div>
                     </div>
                     <div class="card-body">
-                        <canvas id="sentimentChart" height="100"></canvas>
+                        <canvas id="sentimentChart" height="400"></canvas>
                     </div>
                 </div>
             </div>
@@ -126,11 +141,26 @@
             <!-- Most Mentioned Stocks -->
             <div class="col-lg-6 mb-4">
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5><i class="fas fa-trophy"></i> Most Mentioned Stocks</h5>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshData()">
-                            <i class="fas fa-sync refresh-indicator" id="refreshIcon"></i>
-                        </button>
+                        <div class="d-flex align-items-center">
+                            <select class="form-select form-select-sm me-2" id="stocksTimeRange" onchange="changeStocksTimeRange()" style="width: auto;">
+                                <option value="5m">5 min</option>
+                                <option value="15m">15 min</option>
+                                <option value="1h" selected>1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="1d">1 day</option>
+                                <option value="15d">15 days</option>
+                                <option value="30d">30 days</option>
+                                <option value="ytd">YTD</option>
+                                <option value="1y">1 year</option>
+                                <option value="3y">3 years</option>
+                                <option value="all">All time</option>
+                            </select>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="refreshData()">
+                                <i class="fas fa-sync refresh-indicator" id="refreshIcon"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body chart-container" id="stocksList">
                         <div class="text-center">
@@ -146,9 +176,21 @@
             <!-- Live Feed -->
             <div class="col-lg-6 mb-4">
                 <div class="card">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5><i class="fas fa-stream"></i> Live Stock Mentions</h5>
-                        <small class="text-muted">Last 5 minutes</small>
+                        <select class="form-select form-select-sm" id="liveTimeRange" onchange="changeLiveTimeRange()" style="width: auto;">
+                            <option value="5m" selected>5 min</option>
+                            <option value="15m">15 min</option>
+                            <option value="1h">1 hour</option>
+                            <option value="4h">4 hours</option>
+                            <option value="1d">1 day</option>
+                            <option value="15d">15 days</option>
+                            <option value="30d">30 days</option>
+                            <option value="ytd">YTD</option>
+                            <option value="1y">1 year</option>
+                            <option value="3y">3 years</option>
+                            <option value="all">All time</option>
+                        </select>
                     </div>
                     <div class="card-body chart-container" id="liveFeed">
                         <div class="text-center">
@@ -166,8 +208,21 @@
         <div class="row">
             <div class="col-12">
                 <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-fire"></i> Trending Stocks (Last Hour)</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-fire"></i> Trending Stocks</h5>
+                        <select class="form-select form-select-sm" id="trendingTimeRange" onchange="changeTrendingTimeRange()" style="width: auto;">
+                            <option value="5m">5 min</option>
+                            <option value="15m">15 min</option>
+                            <option value="1h" selected>1 hour</option>
+                            <option value="4h">4 hours</option>
+                            <option value="1d">1 day</option>
+                            <option value="15d">15 days</option>
+                            <option value="30d">30 days</option>
+                            <option value="ytd">YTD</option>
+                            <option value="1y">1 year</option>
+                            <option value="3y">3 years</option>
+                            <option value="all">All time</option>
+                        </select>
                     </div>
                     <div class="card-body">
                         <div id="trendingStocks" class="row">
@@ -211,8 +266,34 @@
             loadChartData();
         }
 
-        function loadStocks() {
-            fetch(endpoints.stocks)
+        // Time range change handlers
+        function changeChartTimeRange() {
+            const range = document.getElementById('chartTimeRange').value;
+            console.log('Chart time range changed to:', range);
+            loadChartData(range);
+        }
+
+        function changeStocksTimeRange() {
+            const range = document.getElementById('stocksTimeRange').value;
+            console.log('Stocks time range changed to:', range);
+            loadStocks(range);
+        }
+
+        function changeLiveTimeRange() {
+            const range = document.getElementById('liveTimeRange').value;
+            console.log('Live time range changed to:', range);
+            loadLiveFeed(range);
+        }
+
+        function changeTrendingTimeRange() {
+            const range = document.getElementById('trendingTimeRange').value;
+            console.log('Trending time range changed to:', range);
+            loadTrending(range);
+        }
+
+        function loadStocks(timeRange = '1h') {
+            const url = `${endpoints.stocks}?range=${timeRange}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
@@ -231,8 +312,9 @@
                 });
         }
 
-        function loadTrending() {
-            fetch(endpoints.trending)
+        function loadTrending(timeRange = '1h') {
+            const url = `${endpoints.trending}?range=${timeRange}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
@@ -246,8 +328,9 @@
                 });
         }
 
-        function loadLiveFeed() {
-            fetch(endpoints.live)
+        function loadLiveFeed(timeRange = '5m') {
+            const url = `${endpoints.live}?range=${timeRange}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
@@ -505,8 +588,9 @@
             });
         }
 
-        function loadChartData() {
-            fetch('/api/sentiment/chart')
+        function loadChartData(timeRange = '1h') {
+            const url = `/api/sentiment/chart?range=${timeRange}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {

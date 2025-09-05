@@ -98,6 +98,41 @@ def safe_float(value, default=0.0):
     except (ValueError, TypeError):
         return default
 
+def get_time_delta_from_range(range_str):
+    """Convert time range string to datetime delta"""
+    from datetime import datetime, timedelta
+    
+    now = datetime.utcnow()
+    
+    if range_str == '5m':
+        return timedelta(minutes=5)
+    elif range_str == '15m':
+        return timedelta(minutes=15)
+    elif range_str == '1h':
+        return timedelta(hours=1)
+    elif range_str == '4h':
+        return timedelta(hours=4)
+    elif range_str == '1d':
+        return timedelta(days=1)
+    elif range_str == '15d':
+        return timedelta(days=15)
+    elif range_str == '30d':
+        return timedelta(days=30)
+    elif range_str == 'ytd':
+        # Year to date - from Jan 1 of current year
+        year_start = datetime(now.year, 1, 1)
+        return now - year_start
+    elif range_str == '1y':
+        return timedelta(days=365)
+    elif range_str == '3y':
+        return timedelta(days=365*3)
+    elif range_str == 'all':
+        # Return a very large delta for "all time"
+        return timedelta(days=365*10)
+    else:
+        # Default to 1 hour
+        return timedelta(hours=1)
+
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
@@ -163,9 +198,16 @@ def get_subreddits():
 def get_stocks():
     """Get all stocks with recent sentiment data from REAL Reddit data"""
     try:
-        # Query REAL data from Cassandra - last 2 hours
-        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
-        timestamp_str = two_hours_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        # Get time range from request parameter
+        from flask import request
+        time_range = request.args.get('range', '1h')
+        
+        # Calculate time delta based on range
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        logger.info(f"Stocks querying data from {time_range} ago: {timestamp_str}")
         
         query = f"USE reddit; SELECT subreddit, body, sentiment_score, upvotes, downvotes, api_timestamp FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
@@ -241,11 +283,18 @@ def get_stocks():
 
 @app.route('/api/trending')
 def get_trending():
-    """Get trending stocks from REAL Reddit data (most mentions in last hour)"""
+    """Get trending stocks from REAL Reddit data (most mentions in specified time range)"""
     try:
-        # Query REAL data from last hour
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        timestamp_str = one_hour_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        # Get time range from request parameter
+        from flask import request
+        time_range = request.args.get('range', '1h')
+        
+        # Calculate time delta based on range
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        logger.info(f"Trending querying data from {time_range} ago: {timestamp_str}")
         
         query = f"USE reddit; SELECT body, sentiment_score FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
@@ -295,11 +344,18 @@ def get_trending():
 
 @app.route('/api/sentiment/live')
 def get_live_sentiment():
-    """Get REAL-TIME sentiment updates from Reddit (last 10 minutes)"""
+    """Get REAL-TIME sentiment updates from Reddit (specified time range)"""
     try:
-        # Query REAL data from last 10 minutes
-        ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
-        timestamp_str = ten_minutes_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        # Get time range from request parameter
+        from flask import request
+        time_range = request.args.get('range', '5m')
+        
+        # Calculate time delta based on range
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        logger.info(f"Live feed querying data from {time_range} ago: {timestamp_str}")
         
         query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
@@ -389,9 +445,16 @@ def extract_tickers_from_text(text):
 def get_sentiment_chart_data():
     """Get time-series sentiment data for charting"""
     try:
-        # Query REAL data from last 2 hours for chart
-        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
-        timestamp_str = two_hours_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        # Get time range from request parameter
+        from flask import request
+        time_range = request.args.get('range', '1h')
+        
+        # Calculate time delta based on range
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        logger.info(f"Chart querying data from {time_range} ago: {timestamp_str}")
         
         query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
@@ -409,7 +472,6 @@ def get_sentiment_chart_data():
                         sentiment = safe_float(sentiment_str.strip())
                         
                         # Convert timestamp for chart
-                        from datetime import datetime
                         timestamp_dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f+0000')
                         
                         for ticker in tickers:
