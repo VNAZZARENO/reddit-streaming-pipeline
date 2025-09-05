@@ -1,7 +1,7 @@
 from nltk.sentiment import SentimentIntensityAnalyzer
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf, from_json, col, from_unixtime, avg, current_timestamp
-from pyspark.sql.types import StringType, StructType, StructField, IntegerType, BooleanType, FloatType
+from pyspark.sql.types import StringType, StructType, StructField, IntegerType, BooleanType, FloatType, ArrayType
 import uuid
 
 
@@ -27,6 +27,7 @@ comment_schema = StructType([
     StructField("over_18", BooleanType(), True), #bool
     StructField("timestamp", FloatType(), True), #timestamp
     StructField("permalink", StringType(), True),
+    StructField("companies", ArrayType(StringType()), True), #list of stock tickers
 ])
 
 spark: SparkSession = SparkSession.builder \
@@ -67,6 +68,7 @@ output_df = parsed_df.select(
         "comment_json.over_18",
         "comment_json.timestamp",
         "comment_json.permalink",
+        "comment_json.companies",
     ) \
     .withColumn("uuid", make_uuid()) \
     .withColumn("api_timestamp", from_unixtime(col("timestamp").cast(FloatType()))) \
@@ -98,6 +100,30 @@ summary_df.writeStream.trigger(processingTime="5 seconds") \
         lambda batchDF, batchID: batchDF.write.format("org.apache.spark.sql.cassandra") \
             .option("checkpointLocation", "/tmp/check_point/") \
             .options(table="subreddit_sentiment_avg", keyspace="reddit") \
+            .mode("append").save()
+    ).outputMode("update").start()
+
+# Ticker-specific sentiment analysis
+from pyspark.sql.functions import explode, size
+
+# Filter comments that mention tickers and explode the companies array
+ticker_df = output_df.filter(size(col("companies")) > 0) \
+    .select("*", explode("companies").alias("ticker")) \
+    .drop("companies")
+
+# Create ticker sentiment averages
+ticker_summary_df = ticker_df.withWatermark("ingest_timestamp", "1 minute") \
+    .groupBy("ticker", "subreddit") \
+    .agg(avg("sentiment_score").alias("sentiment_score_avg")) \
+    .withColumn("uuid", make_uuid()) \
+    .withColumn("ingest_timestamp", current_timestamp())
+
+# Write ticker sentiment to new Cassandra table
+ticker_summary_df.writeStream.trigger(processingTime="5 seconds") \
+    .foreachBatch(
+        lambda batchDF, batchID: batchDF.write.format("org.apache.spark.sql.cassandra") \
+            .option("checkpointLocation", "/tmp/check_point_ticker/") \
+            .options(table="ticker_sentiment_avg", keyspace="reddit") \
             .mode("append").save()
     ).outputMode("update").start()
 

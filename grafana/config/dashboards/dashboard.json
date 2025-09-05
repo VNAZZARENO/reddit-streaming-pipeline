@@ -116,10 +116,10 @@
           "rawQuery": true,
           "refId": "A",
           "table": "subreddit_sentiment_avg",
-          "target": "select subreddit, CAST(sentiment_score_avg AS double), ingest_timestamp from reddit.subreddit_sentiment_avg where subreddit IN ('AskReddit', 'funny', 'gaming', 'aww', 'worldnews') and ingest_timestamp>$__timeFrom and ingest_timestamp<$__timeTo ALLOW FILTERING;"
+          "target": "select subreddit, CAST(sentiment_score_avg AS double), ingest_timestamp from reddit.subreddit_sentiment_avg where subreddit IN ('wallstreetbets', 'wallstreetbetsELITE', 'stocks', 'StockMarket', 'ValueInvesting', 'pennystocks') and ingest_timestamp>$__timeFrom and ingest_timestamp<$__timeTo ALLOW FILTERING;"
         }
       ],
-      "title": "Top subreddits",
+      "title": "Financial Subreddits Sentiment",
       "type": "timeseries"
     },
     {
@@ -209,10 +209,10 @@
           "queryType": "query",
           "rawQuery": true,
           "refId": "A",
-          "target": "select subreddit, CAST(sentiment_score_avg AS double), ingest_timestamp from reddit.subreddit_sentiment_avg where subreddit IN ('india', 'usa', 'unitedkingdom', 'australia', 'russia', 'China') and ingest_timestamp>$__timeFrom and ingest_timestamp<$__timeTo;"
+          "target": "select ticker, CAST(sentiment_score_avg AS double), ingest_timestamp from reddit.ticker_sentiment_avg where ingest_timestamp>$__timeFrom and ingest_timestamp<$__timeTo ALLOW FILTERING;"
         }
       ],
-      "title": "Countries",
+      "title": "Top Stock Tickers Sentiment",
       "type": "timeseries"
     }
   ],
@@ -229,7 +229,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Subreddit sentiments",
+  "title": "Stock Market Sentiment Analysis",
   "uid": "ee5399a3-330e-4108-9b56-0dd01d9270b2",
   "version": 1,
   "weekStart": ""

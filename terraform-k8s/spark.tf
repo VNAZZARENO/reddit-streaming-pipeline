@@ -43,6 +43,17 @@ resource "kubernetes_deployment" "spark" {
             name = "KAFKA_TOPIC"
             value = "redditcomments"
           }
+
+          resources {
+            limits = {
+              memory = "4Gi"
+              cpu    = "2000m"
+            }
+            requests = {
+              memory = "2Gi"
+              cpu    = "1000m"
+            }
+          }
         }
       }
     }

@@ -3,3 +3,4 @@ secrets/
 
 # debugging log files
 *.log
+flask-dashboard/venv/
