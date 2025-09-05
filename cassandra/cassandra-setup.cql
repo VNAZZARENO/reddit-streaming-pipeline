@@ -44,3 +44,6 @@ CREATE TABLE IF NOT EXISTS ticker_sentiment_avg(
 WITH CLUSTERING ORDER BY (subreddit ASC, ingest_timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS ON ticker_sentiment_avg (uuid);
+
+-- Additional table for companies field in comments (if needed)
+-- ALTER TABLE comments ADD companies list<text>;

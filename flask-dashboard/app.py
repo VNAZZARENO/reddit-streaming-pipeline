@@ -1,195 +1,273 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, jsonify, render_template
+from flask_cors import CORS
 from cassandra.cluster import Cluster
-from cassandra.io.libevreactor import LibevConnection
-import json
+from cassandra.auth import PlainTextAuthProvider
 from datetime import datetime, timedelta
+import logging
+import json
+from collections import defaultdict, Counter
+import traceback
 
 app = Flask(__name__)
+CORS(app)
 
-# Global Cassandra session
-cassandra_session = None
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def init_cassandra():
-    """Initialize Cassandra connection with proper error handling"""
-    global cassandra_session
+# Cassandra connection
+def get_cassandra_session():
     try:
-        cluster = Cluster(['localhost'])  # Connect to localhost (port-forwarded Cassandra)
-        cluster.connection_class = LibevConnection  # Use libev for Python 3.12 compatibility
+        cluster = Cluster(['cassandra'], port=9042)
         session = cluster.connect()
         session.set_keyspace('reddit')
-        cassandra_session = session
-        print("✅ Cassandra connection successful!")
-        return True
+        return session
     except Exception as e:
-        print(f"❌ Failed to connect to Cassandra: {e}")
-        cassandra_session = None
-        return False
+        logger.error(f"Failed to connect to Cassandra: {e}")
+        return None
+
+def safe_float(value, default=0.0):
+    """Safely convert value to float"""
+    try:
+        return float(value) if value is not None else default
+    except (ValueError, TypeError):
+        return default
 
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
-    return render_template('dashboard.html')
+    return render_template('index.html')
 
-@app.route('/api/debug/tables')
-def debug_tables():
-    """Debug endpoint to see available tables and columns"""
-    if not cassandra_session:
-        return jsonify({'error': 'Database connection unavailable'}), 503
+@app.route('/api/stocks')
+def get_stocks():
+    """Get all stocks with recent sentiment data"""
+    session = get_cassandra_session()
+    if not session:
+        return jsonify({'error': 'Database connection failed'}), 500
     
     try:
-        # Query system tables to see what exists
-        table_rows = cassandra_session.execute("SELECT table_name FROM system_schema.tables WHERE keyspace_name = 'reddit'")
-        tables = [row.table_name for row in table_rows]
-        
-        # Get columns for each table
-        table_info = {}
-        for table in tables:
-            column_rows = cassandra_session.execute(
-                "SELECT column_name, type FROM system_schema.columns WHERE keyspace_name = 'reddit' AND table_name = %s",
-                [table]
-            )
-            table_info[table] = [{'name': row.column_name, 'type': row.type} for row in column_rows]
-        
-        return jsonify({'tables': tables, 'table_info': table_info})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/subreddit_sentiment')
-def subreddit_sentiment():
-    """Get real sentiment data for financial subreddits"""
-    if not cassandra_session:
-        return jsonify({'error': 'Database connection unavailable'}), 503
-    
-    try:
-        # Query real data from last 6 hours
-        six_hours_ago = datetime.now() - timedelta(hours=6)
+        # Get recent comments with companies mentioned (last hour)
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
         
         query = """
-        SELECT subreddit, sentiment_score_avg, ingest_timestamp
-        FROM subreddit_sentiment_avg
-        WHERE subreddit IN ('wallstreetbets', 'wallstreetbetsELITE', 'stocks', 'StockMarket', 'ValueInvesting', 'pennystocks')
-        AND ingest_timestamp > %s
+        SELECT subreddit, body, sentiment_score, upvotes, downvotes, api_timestamp
+        FROM comments 
+        WHERE api_timestamp > ? 
         ALLOW FILTERING
         """
         
-        rows = cassandra_session.execute(query, [six_hours_ago])
+        rows = session.execute(query, [one_hour_ago])
         
-        data = []
+        # Process results to extract stock mentions and calculate sentiment
+        stock_data = defaultdict(lambda: {
+            'mentions': 0,
+            'sentiment_scores': [],
+            'total_engagement': 0,
+            'subreddits': Counter(),
+            'latest_mention': None
+        })
+        
         for row in rows:
-            data.append({
-                'subreddit': row.subreddit,
-                'sentiment': float(row.sentiment_score_avg) if row.sentiment_score_avg else 0,
-                'timestamp': row.ingest_timestamp.isoformat() if row.ingest_timestamp else None
+            # Extract potential stock tickers from body
+            tickers = extract_tickers_from_text(row.body)
+            
+            if tickers:
+                engagement = (row.upvotes or 0) - (row.downvotes or 0)
+                sentiment = safe_float(row.sentiment_score)
+                
+                for ticker in tickers:
+                    stock_data[ticker]['mentions'] += 1
+                    stock_data[ticker]['sentiment_scores'].append(sentiment)
+                    stock_data[ticker]['total_engagement'] += engagement
+                    stock_data[ticker]['subreddits'][row.subreddit] += 1
+                    stock_data[ticker]['latest_mention'] = row.api_timestamp.isoformat() if row.api_timestamp else None
+        
+        # Calculate averages and format response
+        results = []
+        for ticker, data in stock_data.items():
+            if data['mentions'] >= 2:  # Only include stocks mentioned at least twice
+                avg_sentiment = sum(data['sentiment_scores']) / len(data['sentiment_scores'])
+                
+                results.append({
+                    'ticker': ticker,
+                    'mentions': data['mentions'],
+                    'avg_sentiment': round(avg_sentiment, 3),
+                    'sentiment_label': get_sentiment_label(avg_sentiment),
+                    'total_engagement': data['total_engagement'],
+                    'top_subreddit': data['subreddits'].most_common(1)[0][0] if data['subreddits'] else 'unknown',
+                    'subreddit_count': len(data['subreddits']),
+                    'latest_mention': data['latest_mention']
+                })
+        
+        # Sort by mentions descending
+        results.sort(key=lambda x: x['mentions'], reverse=True)
+        
+        return jsonify({
+            'stocks': results[:50],  # Top 50 most mentioned
+            'total_count': len(results),
+            'last_updated': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_stocks: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if session:
+            session.shutdown()
+
+@app.route('/api/trending')
+def get_trending():
+    """Get trending stocks (most mentions in last hour)"""
+    session = get_cassandra_session()
+    if not session:
+        return jsonify({'error': 'Database connection failed'}), 500
+    
+    try:
+        # Get last hour of data
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        
+        query = """
+        SELECT body, sentiment_score, upvotes, downvotes
+        FROM comments 
+        WHERE api_timestamp > ? 
+        ALLOW FILTERING
+        """
+        
+        rows = session.execute(query, [one_hour_ago])
+        
+        trending_stocks = Counter()
+        sentiment_by_stock = defaultdict(list)
+        
+        for row in rows:
+            tickers = extract_tickers_from_text(row.body)
+            sentiment = safe_float(row.sentiment_score)
+            
+            for ticker in tickers:
+                trending_stocks[ticker] += 1
+                sentiment_by_stock[ticker].append(sentiment)
+        
+        # Format trending results
+        trending_results = []
+        for ticker, count in trending_stocks.most_common(10):
+            avg_sentiment = sum(sentiment_by_stock[ticker]) / len(sentiment_by_stock[ticker])
+            trending_results.append({
+                'ticker': ticker,
+                'mentions_last_hour': count,
+                'avg_sentiment': round(avg_sentiment, 3),
+                'sentiment_label': get_sentiment_label(avg_sentiment)
             })
         
-        return jsonify(data)
+        return jsonify({
+            'trending': trending_results,
+            'last_updated': datetime.utcnow().isoformat()
+        })
         
     except Exception as e:
-        print(f"❌ Error querying subreddit sentiment: {e}")
-        return jsonify({'error': 'Failed to query data'}), 500
+        logger.error(f"Error in get_trending: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if session:
+            session.shutdown()
 
-@app.route('/api/ticker_sentiment')
-def ticker_sentiment():
-    """Get real sentiment data for stock tickers"""
-    if not cassandra_session:
-        return jsonify({'error': 'Database connection unavailable'}), 503
+@app.route('/api/sentiment/live')
+def get_live_sentiment():
+    """Get real-time sentiment updates (last 5 minutes)"""
+    session = get_cassandra_session()
+    if not session:
+        return jsonify({'error': 'Database connection failed'}), 500
     
     try:
-        # First, let's check if the ticker_sentiment_avg table exists
-        # If not, we'll extract ticker data from comments table instead
-        
-        # Try the ticker_sentiment_avg table first
-        try:
-            six_hours_ago = datetime.now() - timedelta(hours=6)
-            query = """
-            SELECT ticker, sentiment_score_avg, ingest_timestamp, subreddit
-            FROM ticker_sentiment_avg
-            WHERE ingest_timestamp > %s
-            ALLOW FILTERING
-            """
-            rows = cassandra_session.execute(query, [six_hours_ago])
-            
-            data = []
-            for row in rows:
-                data.append({
-                    'ticker': row.ticker,
-                    'sentiment': float(row.sentiment_score_avg) if row.sentiment_score_avg else 0,
-                    'timestamp': row.ingest_timestamp.isoformat() if row.ingest_timestamp else None,
-                    'subreddit': row.subreddit
-                })
-            
-            return jsonify(data)
-            
-        except Exception as table_error:
-            # If ticker_sentiment_avg doesn't exist, extract from comments table
-            print(f"⚠️ ticker_sentiment_avg table not found, extracting from comments: {table_error}")
-            
-            # Since companies column doesn't exist yet, return empty data for now
-            print("⚠️ companies column not found in comments table, returning empty ticker data")
-            return jsonify([])
-        
-    except Exception as e:
-        print(f"❌ Error querying ticker sentiment: {e}")
-        return jsonify({'error': 'Failed to query data'}), 500
-
-@app.route('/api/recent_comments')
-def recent_comments():
-    """Get real recent comments with detected tickers"""
-    if not cassandra_session:
-        return jsonify({'error': 'Database connection unavailable'}), 503
-    
-    try:
-        # Query real comments from last hour
-        one_hour_ago = datetime.now() - timedelta(hours=1)
+        # Get last 5 minutes of data
+        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
         
         query = """
         SELECT subreddit, body, sentiment_score, api_timestamp
-        FROM comments
-        WHERE api_timestamp > %s
+        FROM comments 
+        WHERE api_timestamp > ? 
         ALLOW FILTERING
         """
         
-        rows = cassandra_session.execute(query, [one_hour_ago])
+        rows = session.execute(query, [five_minutes_ago])
         
-        data = []
-        count = 0
+        live_updates = []
         for row in rows:
-            if count >= 50:  # Apply limit in Python since CQL LIMIT with ALLOW FILTERING has issues
-                break
-            # Simple ticker detection from comment body as temporary solution
-            detected_tickers = []
-            if row.body:
-                import re
-                # Find $TICKER patterns
-                dollar_tickers = re.findall(r'\$([A-Z]{2,5})\b', row.body.upper())
-                # Find standalone ticker patterns  
-                word_tickers = re.findall(r'\b([A-Z]{2,5})\b', row.body.upper())
-                # Common stock tickers to filter for
-                common_tickers = {'AAPL', 'TSLA', 'GME', 'AMD', 'NVDA', 'SPY', 'QQQ', 'MSFT', 'AMZN', 'GOOGL', 'META'}
-                all_found = set(dollar_tickers + word_tickers)
-                detected_tickers = list(all_found.intersection(common_tickers))
-            
-            data.append({
-                'subreddit': row.subreddit,
-                'body': row.body[:200] + '...' if row.body and len(row.body) > 200 else row.body,
-                'tickers': detected_tickers,  # Extract tickers from comment body
-                'sentiment': float(row.sentiment_score) if row.sentiment_score else 0,
-                'timestamp': row.api_timestamp.isoformat() if row.api_timestamp else None
-            })
-            count += 1
+            tickers = extract_tickers_from_text(row.body)
+            if tickers:
+                sentiment = safe_float(row.sentiment_score)
+                live_updates.append({
+                    'tickers': tickers,
+                    'subreddit': row.subreddit,
+                    'sentiment_score': sentiment,
+                    'sentiment_label': get_sentiment_label(sentiment),
+                    'timestamp': row.api_timestamp.isoformat() if row.api_timestamp else None,
+                    'body_preview': row.body[:100] + '...' if len(row.body) > 100 else row.body
+                })
         
-        return jsonify(data)
+        # Sort by timestamp descending
+        live_updates.sort(key=lambda x: x['timestamp'] or '', reverse=True)
+        
+        return jsonify({
+            'live_updates': live_updates[:20],  # Last 20 updates
+            'last_updated': datetime.utcnow().isoformat()
+        })
         
     except Exception as e:
-        print(f"❌ Error querying recent comments: {e}")
-        return jsonify({'error': 'Failed to query data'}), 500
+        logger.error(f"Error in get_live_sentiment: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if session:
+            session.shutdown()
+
+def extract_tickers_from_text(text):
+    """Extract stock tickers from text using same logic as producer"""
+    import re
+    detected = []
+    text_upper = text.upper()
+    
+    # Pattern 1: $TICKER (most reliable)
+    dollar_tickers = re.findall(r'\$([A-Z]{1,5})', text_upper)
+    detected.extend(dollar_tickers)
+    
+    # Pattern 2: Strong financial context patterns
+    stock_context = re.findall(r'\b([A-Z]{1,5})\s+(?:stock|shares|equity|share)\b', text_upper)
+    detected.extend(stock_context)
+    
+    # Pattern 3: Trading actions
+    trading_actions = re.findall(r'\b(?:buy|sell|bought|sold|holding|holds|own|owns|long|short)\s+([A-Z]{1,5})\b', text_upper)
+    detected.extend(trading_actions)
+    
+    # Pattern 4: Options patterns
+    options_patterns = re.findall(r'\b([A-Z]{1,5})\s+(?:calls|puts|call|put|options|option)\b', text_upper)
+    detected.extend(options_patterns)
+    
+    # Pattern 5: Price movement patterns
+    price_patterns = re.findall(r'\b([A-Z]{1,5})\s+(?:up|down|mooning|moon|dipped|dip|pumped|dumped|rallied|crashed|soared|tanked)\b', text_upper)
+    detected.extend(price_patterns)
+    
+    # Exclude common words
+    exclude_words = {
+        'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'WAS', 'GET', 'HAS',
+        'CEO', 'CFO', 'USA', 'USD', 'SEC', 'FDA', 'WSB', 'DD', 'FUD', 'LOL', 'OMG'
+    }
+    
+    # Remove duplicates and filter
+    seen = set()
+    unique_detected = []
+    for ticker in detected:
+        if ticker not in seen and ticker not in exclude_words and len(ticker) >= 1:
+            seen.add(ticker)
+            unique_detected.append(ticker)
+    
+    return unique_detected[:10]
+
+def get_sentiment_label(score):
+    """Convert sentiment score to human-readable label"""
+    if score > 0.1:
+        return 'Bullish' if score > 0.3 else 'Slightly Bullish'
+    elif score < -0.1:
+        return 'Bearish' if score < -0.3 else 'Slightly Bearish'
+    else:
+        return 'Neutral'
 
 if __name__ == '__main__':
-    # Initialize Cassandra connection on startup
-    print("🔄 Initializing Cassandra connection...")
-    if init_cassandra():
-        print("✅ Flask app starting with real database connection!")
-    else:
-        print("⚠️ Flask app starting without database connection. Check Cassandra port-forward.")
-    
     app.run(host='0.0.0.0', port=5000, debug=True)

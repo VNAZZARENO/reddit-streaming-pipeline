@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reddit Stock Sentiment Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .sentiment-bullish { color: #28a745; }
+        .sentiment-bearish { color: #dc3545; }
+        .sentiment-neutral { color: #6c757d; }
+        .stock-card { 
+            transition: transform 0.2s; 
+            cursor: pointer; 
+        }
+        .stock-card:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        .ticker-badge {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+        }
+        .live-update {
+            border-left: 4px solid #007bff;
+            padding-left: 10px;
+            margin-bottom: 10px;
+        }
+        .refresh-indicator {
+            animation: spin 2s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .chart-container {
+            height: 300px;
+            overflow-y: auto;
+        }
+        .status-indicator {
+            height: 10px;
+            width: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-online { background-color: #28a745; }
+        .status-offline { background-color: #dc3545; }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-line"></i> Reddit Stock Sentiment
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <span class="status-indicator" id="connectionStatus"></span>
+                    <span id="lastUpdate">Connecting...</span>
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-coins"></i> Active Stocks</h5>
+                        <h2 class="text-primary" id="totalStocks">-</h2>
+                        <small class="text-muted">Mentioned in last hour</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-fire"></i> Trending</h5>
+                        <h2 class="text-warning" id="trendingCount">-</h2>
+                        <small class="text-muted">Hot discussions</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-arrow-trend-up"></i> Bullish</h5>
+                        <h2 class="text-success" id="bullishCount">-</h2>
+                        <small class="text-muted">Positive sentiment</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-arrow-trend-down"></i> Bearish</h5>
+                        <h2 class="text-danger" id="bearishCount">-</h2>
+                        <small class="text-muted">Negative sentiment</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Most Mentioned Stocks -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between">
+                        <h5><i class="fas fa-trophy"></i> Most Mentioned Stocks</h5>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshData()">
+                            <i class="fas fa-sync refresh-indicator" id="refreshIcon"></i>
+                        </button>
+                    </div>
+                    <div class="card-body chart-container" id="stocksList">
+                        <div class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading stock data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Feed -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-stream"></i> Live Stock Mentions</h5>
+                        <small class="text-muted">Last 5 minutes</small>
+                    </div>
+                    <div class="card-body chart-container" id="liveFeed">
+                        <div class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading live feed...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trending Stocks Row -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-fire"></i> Trending Stocks (Last Hour)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="trendingStocks" class="row">
+                            <div class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading trending data...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let refreshInterval;
+        let isRefreshing = false;
+
+        // API endpoints
+        const API_BASE = '';
+        const endpoints = {
+            stocks: `${API_BASE}/api/stocks`,
+            trending: `${API_BASE}/api/trending`,
+            live: `${API_BASE}/api/sentiment/live`
+        };
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAllData();
+            startAutoRefresh();
+        });
+
+        function loadAllData() {
+            loadStocks();
+            loadTrending();
+            loadLiveFeed();
+        }
+
+        function loadStocks() {
+            fetch(endpoints.stocks)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showError('Failed to load stocks: ' + data.error);
+                        return;
+                    }
+                    
+                    displayStocks(data.stocks || []);
+                    updateSummaryStats(data.stocks || []);
+                    updateConnectionStatus(true);
+                })
+                .catch(error => {
+                    console.error('Error loading stocks:', error);
+                    showError('Failed to connect to API');
+                    updateConnectionStatus(false);
+                });
+        }
+
+        function loadTrending() {
+            fetch(endpoints.trending)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Trending error:', data.error);
+                        return;
+                    }
+                    displayTrending(data.trending || []);
+                })
+                .catch(error => {
+                    console.error('Error loading trending:', error);
+                });
+        }
+
+        function loadLiveFeed() {
+            fetch(endpoints.live)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Live feed error:', data.error);
+                        return;
+                    }
+                    displayLiveFeed(data.live_updates || []);
+                })
+                .catch(error => {
+                    console.error('Error loading live feed:', error);
+                });
+        }
+
+        function displayStocks(stocks) {
+            const container = document.getElementById('stocksList');
+            if (stocks.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No stock mentions found in the last hour</div>';
+                return;
+            }
+
+            let html = '';
+            stocks.slice(0, 10).forEach((stock, index) => {
+                const sentimentClass = getSentimentClass(stock.avg_sentiment);
+                const sentimentIcon = getSentimentIcon(stock.avg_sentiment);
+                
+                html += `
+                    <div class="stock-card d-flex justify-content-between align-items-center p-3 mb-2 border rounded">
+                        <div>
+                            <span class="ticker-badge badge bg-primary fs-6">${stock.ticker}</span>
+                            <small class="text-muted ms-2">${stock.top_subreddit}</small>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold ${sentimentClass}">
+                                ${sentimentIcon} ${stock.sentiment_label}
+                            </div>
+                            <small class="text-muted">
+                                ${stock.mentions} mentions | ${stock.total_engagement} score
+                            </small>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function displayTrending(trending) {
+            const container = document.getElementById('trendingStocks');
+            if (trending.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No trending stocks found</div>';
+                return;
+            }
+
+            let html = '';
+            trending.forEach(stock => {
+                const sentimentClass = getSentimentClass(stock.avg_sentiment);
+                html += `
+                    <div class="col-md-2 col-sm-4 col-6 mb-3">
+                        <div class="card text-center stock-card">
+                            <div class="card-body py-3">
+                                <h6 class="ticker-badge text-primary">${stock.ticker}</h6>
+                                <div class="small ${sentimentClass}">${stock.sentiment_label}</div>
+                                <div class="small text-muted">${stock.mentions_last_hour} mentions</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function displayLiveFeed(updates) {
+            const container = document.getElementById('liveFeed');
+            if (updates.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No recent stock mentions</div>';
+                return;
+            }
+
+            let html = '';
+            updates.slice(0, 10).forEach(update => {
+                const sentimentClass = getSentimentClass(update.sentiment_score);
+                const sentimentIcon = getSentimentIcon(update.sentiment_score);
+                const timeAgo = getTimeAgo(update.timestamp);
+                
+                html += `
+                    <div class="live-update">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center mb-1">
+                                    ${update.tickers.map(ticker => 
+                                        `<span class="ticker-badge badge bg-secondary me-1">${ticker}</span>`
+                                    ).join('')}
+                                    <small class="text-muted ms-2">r/${update.subreddit}</small>
+                                </div>
+                                <div class="small text-muted">${update.body_preview}</div>
+                            </div>
+                            <div class="text-end ms-2">
+                                <div class="small ${sentimentClass}">${sentimentIcon}</div>
+                                <div class="small text-muted">${timeAgo}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function updateSummaryStats(stocks) {
+            document.getElementById('totalStocks').textContent = stocks.length;
+            
+            let bullish = 0, bearish = 0, trending = 0;
+            stocks.forEach(stock => {
+                if (stock.avg_sentiment > 0.1) bullish++;
+                else if (stock.avg_sentiment < -0.1) bearish++;
+                if (stock.mentions >= 5) trending++;
+            });
+            
+            document.getElementById('bullishCount').textContent = bullish;
+            document.getElementById('bearishCount').textContent = bearish;
+            document.getElementById('trendingCount').textContent = trending;
+        }
+
+        function getSentimentClass(sentiment) {
+            if (sentiment > 0.1) return 'sentiment-bullish';
+            if (sentiment < -0.1) return 'sentiment-bearish';
+            return 'sentiment-neutral';
+        }
+
+        function getSentimentIcon(sentiment) {
+            if (sentiment > 0.3) return '<i class="fas fa-arrow-up"></i>';
+            if (sentiment > 0.1) return '<i class="fas fa-arrow-up"></i>';
+            if (sentiment < -0.3) return '<i class="fas fa-arrow-down"></i>';
+            if (sentiment < -0.1) return '<i class="fas fa-arrow-down"></i>';
+            return '<i class="fas fa-minus"></i>';
+        }
+
+        function getTimeAgo(timestamp) {
+            if (!timestamp) return '';
+            const now = new Date();
+            const time = new Date(timestamp);
+            const diffMs = now - time;
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) return 'now';
+            if (diffMins < 60) return `${diffMins}m`;
+            const diffHours = Math.floor(diffMins / 60);
+            return `${diffHours}h`;
+        }
+
+        function refreshData() {
+            if (isRefreshing) return;
+            
+            isRefreshing = true;
+            const icon = document.getElementById('refreshIcon');
+            icon.classList.add('refresh-indicator');
+            
+            loadAllData();
+            
+            setTimeout(() => {
+                isRefreshing = false;
+                icon.classList.remove('refresh-indicator');
+            }, 2000);
+        }
+
+        function startAutoRefresh() {
+            refreshInterval = setInterval(loadAllData, 30000); // Refresh every 30 seconds
+        }
+
+        function updateConnectionStatus(online) {
+            const status = document.getElementById('connectionStatus');
+            const lastUpdate = document.getElementById('lastUpdate');
+            
+            if (online) {
+                status.className = 'status-indicator status-online';
+                lastUpdate.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+            } else {
+                status.className = 'status-indicator status-offline';
+                lastUpdate.textContent = 'Connection failed';
+            }
+        }
+
+        function showError(message) {
+            console.error(message);
+            // Could add toast notifications here
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+    </script>
+</body>
+</html>
