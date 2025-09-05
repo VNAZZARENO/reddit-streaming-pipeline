@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 def query_cassandra_direct(query):
     """Query Cassandra directly using kubectl exec and cqlsh"""
     try:
+        # Validate query is not empty
+        if not query or not query.strip():
+            logger.error("Empty query provided")
+            return []
+        
         # Get cassandra pod name
         pod_result = subprocess.run(['kubectl', 'get', 'pods', '-n', 'redditpipeline', '-l', 'k8s.service=cassandra', '-o', 'jsonpath={.items[0].metadata.name}'], 
                                   capture_output=True, text=True, timeout=10)
@@ -32,22 +37,33 @@ def query_cassandra_direct(query):
             logger.error("No Cassandra pod found")
             return []
         
-        # Split query and execute statements separately if needed
+        # Clean the query - remove empty statements
         statements = [stmt.strip() for stmt in query.split(';') if stmt.strip()]
+        
+        if not statements:
+            logger.error("No valid statements found in query")
+            return []
         
         # First execute USE statement if present
         if statements and statements[0].upper().startswith('USE'):
-            use_cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-k', 'reddit']
             # For USE statement, we switch keyspace in connection
             if len(statements) > 1:
                 # Execute the main query in the reddit keyspace
                 main_query = statements[1]
+                if not main_query.strip():
+                    logger.error("Empty main query after USE statement")
+                    return []
                 cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-k', 'reddit', '-e', main_query]
             else:
+                logger.error("USE statement found but no main query")
                 return []
         else:
-            # Execute the full query as is
-            cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-e', query]
+            # Execute the full query as is with reddit keyspace
+            final_query = query.strip()
+            if not final_query:
+                logger.error("Final query is empty after cleaning")
+                return []
+            cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-k', 'reddit', '-e', final_query]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
@@ -285,7 +301,7 @@ def get_live_sentiment():
         ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
         timestamp_str = ten_minutes_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
         
-        query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
+        query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
         data_lines = query_cassandra_direct(query)
         
@@ -293,8 +309,8 @@ def get_live_sentiment():
         for line in data_lines:
             try:
                 parts = [p.strip() for p in line.split('|')]
-                if len(parts) >= 4:
-                    subreddit, body, sentiment_str, timestamp_str = parts[:4]
+                if len(parts) >= 5:
+                    subreddit, body, sentiment_str, timestamp_str, permalink = parts[:5]
                     
                     tickers = extract_tickers_from_text(body)
                     if tickers:
@@ -306,7 +322,8 @@ def get_live_sentiment():
                             'sentiment_score': sentiment,
                             'sentiment_label': get_sentiment_label(sentiment),
                             'timestamp': timestamp_str,
-                            'body_preview': body[:100] + '...' if len(body) > 100 else body
+                            'body_preview': body[:100] + '...' if len(body) > 100 else body,
+                            'reddit_url': f"https://reddit.com{permalink}"
                         })
                         
             except Exception as parse_error:
@@ -367,6 +384,60 @@ def extract_tickers_from_text(text):
             unique_detected.append(ticker)
     
     return unique_detected[:10]
+
+@app.route('/api/sentiment/chart')
+def get_sentiment_chart_data():
+    """Get time-series sentiment data for charting"""
+    try:
+        # Query REAL data from last 2 hours for chart
+        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
+        timestamp_str = two_hours_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
+        
+        data_lines = query_cassandra_direct(query)
+        
+        chart_data = []
+        for line in data_lines:
+            try:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) >= 5:
+                    subreddit, body, sentiment_str, timestamp_str, permalink = parts[:5]
+                    
+                    tickers = extract_tickers_from_text(body)
+                    if tickers:
+                        sentiment = safe_float(sentiment_str.strip())
+                        
+                        # Convert timestamp for chart
+                        from datetime import datetime
+                        timestamp_dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f+0000')
+                        
+                        for ticker in tickers:
+                            chart_data.append({
+                                'ticker': ticker,
+                                'timestamp': timestamp_dt.isoformat(),
+                                'sentiment_score': sentiment,
+                                'subreddit': subreddit,
+                                'reddit_url': f"https://reddit.com{permalink}",
+                                'body_preview': body[:50] + '...' if len(body) > 50 else body
+                            })
+                        
+            except Exception as parse_error:
+                continue
+        
+        # Sort by timestamp
+        chart_data.sort(key=lambda x: x['timestamp'])
+        
+        logger.info(f"Found {len(chart_data)} data points for chart")
+        
+        return jsonify({
+            'chart_data': chart_data,
+            'last_updated': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_sentiment_chart_data: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
 
 def get_sentiment_label(score):
     """Convert sentiment score to human-readable label"""

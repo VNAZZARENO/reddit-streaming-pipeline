@@ -6,6 +6,9 @@
     <title>Reddit Stock Sentiment Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
     <style>
         .sentiment-bullish { color: #28a745; }
         .sentiment-bearish { color: #dc3545; }
@@ -104,6 +107,21 @@
             </div>
         </div>
 
+        <!-- Real-Time Sentiment Chart -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between">
+                        <h5><i class="fas fa-chart-line"></i> Real-Time Sentiment Chart</h5>
+                        <small class="text-muted">Updates automatically with new data</small>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="sentimentChart" height="100"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <!-- Most Mentioned Stocks -->
             <div class="col-lg-6 mb-4">
@@ -181,6 +199,7 @@
 
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', function() {
+            initChart();
             loadAllData();
             startAutoRefresh();
         });
@@ -189,6 +208,7 @@
             loadStocks();
             loadTrending();
             loadLiveFeed();
+            loadChartData();
         }
 
         function loadStocks() {
@@ -322,6 +342,7 @@
                                     <small class="text-muted ms-2">r/${update.subreddit}</small>
                                 </div>
                                 <div class="small text-muted">${update.body_preview}</div>
+                                ${update.reddit_url ? `<a href="${update.reddit_url}" target="_blank" class="small text-primary"><i class="fab fa-reddit"></i> View on Reddit</a>` : ''}
                             </div>
                             <div class="text-end ms-2">
                                 <div class="small ${sentimentClass}">${sentimentIcon}</div>
@@ -413,10 +434,138 @@
             // Could add toast notifications here
         }
 
+        // Chart functionality
+        let sentimentChart = null;
+        const chartColors = {
+            bullish: '#28a745',
+            bearish: '#dc3545',
+            neutral: '#6c757d'
+        };
+
+        function initChart() {
+            const ctx = document.getElementById('sentimentChart').getContext('2d');
+            sentimentChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'minute',
+                                displayFormats: {
+                                    minute: 'HH:mm'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Sentiment Score'
+                            },
+                            min: -1,
+                            max: 1
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                afterBody: function(context) {
+                                    const dataPoint = context[0].raw;
+                                    return [`Subreddit: r/${dataPoint.subreddit}`, `Comment: ${dataPoint.body_preview}`];
+                                }
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false
+                    },
+                    onClick: function(event, elements) {
+                        if (elements.length > 0) {
+                            const dataPoint = elements[0];
+                            const data = sentimentChart.data.datasets[dataPoint.datasetIndex].data[dataPoint.index];
+                            if (data.reddit_url) {
+                                window.open(data.reddit_url, '_blank');
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function loadChartData() {
+            fetch('/api/sentiment/chart')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Chart data error:', data.error);
+                        return;
+                    }
+                    updateChart(data.chart_data || []);
+                })
+                .catch(error => {
+                    console.error('Error loading chart data:', error);
+                });
+        }
+
+        function updateChart(chartData) {
+            if (!sentimentChart) return;
+
+            // Group data by ticker
+            const tickerData = {};
+            chartData.forEach(point => {
+                if (!tickerData[point.ticker]) {
+                    tickerData[point.ticker] = [];
+                }
+                tickerData[point.ticker].push({
+                    x: new Date(point.timestamp),
+                    y: point.sentiment_score,
+                    subreddit: point.subreddit,
+                    body_preview: point.body_preview,
+                    reddit_url: point.reddit_url
+                });
+            });
+
+            // Create datasets for top 5 most active tickers
+            const sortedTickers = Object.keys(tickerData)
+                .sort((a, b) => tickerData[b].length - tickerData[a].length)
+                .slice(0, 5);
+
+            const datasets = sortedTickers.map((ticker, index) => {
+                const hue = (index * 72) % 360; // Distribute colors evenly
+                return {
+                    label: `$${ticker}`,
+                    data: tickerData[ticker],
+                    borderColor: `hsl(${hue}, 70%, 50%)`,
+                    backgroundColor: `hsl(${hue}, 70%, 50%, 0.1)`,
+                    fill: false,
+                    tension: 0.1
+                };
+            });
+
+            sentimentChart.data.datasets = datasets;
+            sentimentChart.update('none');
+        }
+
         // Cleanup on page unload
         window.addEventListener('beforeunload', function() {
             if (refreshInterval) {
                 clearInterval(refreshInterval);
+            }
+            if (sentimentChart) {
+                sentimentChart.destroy();
             }
         });
     </script>
