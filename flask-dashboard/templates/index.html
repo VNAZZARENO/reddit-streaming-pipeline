@@ -8,7 +8,6 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
     <style>
         .sentiment-bullish { color: #28a745; }
         .sentiment-bearish { color: #dc3545; }
@@ -37,10 +36,6 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        .chart-container {
-            height: 300px;
-            overflow-y: auto;
-        }
         .status-indicator {
             height: 10px;
             width: 10px;
@@ -49,13 +44,45 @@
         }
         .status-online { background-color: #28a745; }
         .status-offline { background-color: #dc3545; }
+        .scrollable-content {
+            height: 400px;
+            overflow-y: auto;
+        }
+        .data-explorer {
+            height: 500px;
+            overflow-y: auto;
+        }
+        .filter-badge {
+            font-size: 0.8em;
+        }
+        .global-controls {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 0;
+            margin-bottom: 20px;
+        }
+        .stats-card {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+        }
+        .table-sm th, .table-sm td {
+            padding: 0.3rem;
+            font-size: 0.85em;
+        }
+        .text-truncate-custom {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand" href="#">
-                <i class="fas fa-chart-line"></i> Reddit Stock Sentiment
+                <i class="fas fa-chart-line"></i> Reddit Stock Sentiment Dashboard
             </a>
             <div class="navbar-nav ms-auto">
                 <span class="navbar-text">
@@ -66,55 +93,63 @@
         </div>
     </nav>
 
-    <div class="container-fluid mt-4">
-        <!-- Summary Cards -->
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="fas fa-coins"></i> Active Stocks</h5>
-                        <h2 class="text-primary" id="totalStocks">-</h2>
-                        <small class="text-muted">Mentioned in last hour</small>
-                    </div>
+    <!-- Global Controls -->
+    <div class="global-controls">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-4">
+                    <h5 class="mb-0">
+                        <i class="fas fa-clock"></i> Global Time Range
+                    </h5>
                 </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="fas fa-fire"></i> Trending</h5>
-                        <h2 class="text-warning" id="trendingCount">-</h2>
-                        <small class="text-muted">Hot discussions</small>
-                    </div>
+                <div class="col-md-4">
+                    <select class="form-select" id="globalTimeRange" onchange="changeGlobalTimeRange()">
+                        <option value="5m">5 minutes</option>
+                        <option value="15m">15 minutes</option>
+                        <option value="1h" selected>1 hour</option>
+                        <option value="4h">4 hours</option>
+                        <option value="1d">1 day</option>
+                        <option value="15d">15 days</option>
+                        <option value="30d">30 days</option>
+                        <option value="ytd">Year to date</option>
+                        <option value="1y">1 year</option>
+                        <option value="3y">3 years</option>
+                        <option value="all">All time</option>
+                    </select>
                 </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="fas fa-arrow-trend-up"></i> Bullish</h5>
-                        <h2 class="text-success" id="bullishCount">-</h2>
-                        <small class="text-muted">Positive sentiment</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center">
-                    <div class="card-body">
-                        <h5 class="card-title"><i class="fas fa-arrow-trend-down"></i> Bearish</h5>
-                        <h2 class="text-danger" id="bearishCount">-</h2>
-                        <small class="text-muted">Negative sentiment</small>
+                <div class="col-md-4">
+                    <div class="d-flex gap-3">
+                        <div class="stats-card rounded p-2 text-center flex-fill">
+                            <div class="h6 mb-0" id="totalComments">-</div>
+                            <small>Comments</small>
+                        </div>
+                        <div class="stats-card rounded p-2 text-center flex-fill">
+                            <div class="h6 mb-0" id="uniqueStocks">-</div>
+                            <small>Stocks</small>
+                        </div>
+                        <div class="stats-card rounded p-2 text-center flex-fill">
+                            <div class="h6 mb-0" id="avgSentiment">-</div>
+                            <small>Avg Sentiment</small>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Real-Time Sentiment Chart -->
+    <div class="container-fluid">
+        <!-- Sentiment Chart -->
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5><i class="fas fa-chart-line"></i> Real-Time Sentiment Chart</h5>
-                        <div class="d-flex align-items-center">
-                            <select class="form-select form-select-sm me-2" id="chartTimeRange" onchange="changeChartTimeRange()" style="width: auto;">
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="lockChart">
+                                <label class="form-check-label" for="lockChart">Lock to Global</label>
+                            </div>
+                            <select class="form-select form-select-sm" id="chartTimeRange" onchange="changeChartTimeRange()" style="width: auto;">
                                 <option value="5m">5 min</option>
                                 <option value="15m">15 min</option>
                                 <option value="1h" selected>1 hour</option>
@@ -127,7 +162,6 @@
                                 <option value="3y">3 years</option>
                                 <option value="all">All time</option>
                             </select>
-                            <small class="text-muted">Updates automatically</small>
                         </div>
                     </div>
                     <div class="card-body">
@@ -138,13 +172,17 @@
         </div>
 
         <div class="row">
-            <!-- Most Mentioned Stocks -->
+            <!-- Stock Activity History -->
             <div class="col-lg-6 mb-4">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-trophy"></i> Most Mentioned Stocks</h5>
-                        <div class="d-flex align-items-center">
-                            <select class="form-select form-select-sm me-2" id="stocksTimeRange" onchange="changeStocksTimeRange()" style="width: auto;">
+                        <h5><i class="fas fa-history"></i> Stock Activity History</h5>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="lockHistory">
+                                <label class="form-check-label" for="lockHistory">Lock to Global</label>
+                            </div>
+                            <select class="form-select form-select-sm" id="historyTimeRange" onchange="changeHistoryTimeRange()" style="width: auto;">
                                 <option value="5m">5 min</option>
                                 <option value="15m">15 min</option>
                                 <option value="1h" selected>1 hour</option>
@@ -157,17 +195,14 @@
                                 <option value="3y">3 years</option>
                                 <option value="all">All time</option>
                             </select>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="refreshData()">
-                                <i class="fas fa-sync refresh-indicator" id="refreshIcon"></i>
-                            </button>
                         </div>
                     </div>
-                    <div class="card-body chart-container" id="stocksList">
+                    <div class="card-body scrollable-content" id="stockHistory">
                         <div class="text-center">
                             <div class="spinner-border" role="status">
                                 <span class="visually-hidden">Loading...</span>
                             </div>
-                            <p class="mt-2">Loading stock data...</p>
+                            <p class="mt-2">Loading stock activity...</p>
                         </div>
                     </div>
                 </div>
@@ -178,21 +213,27 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5><i class="fas fa-stream"></i> Live Stock Mentions</h5>
-                        <select class="form-select form-select-sm" id="liveTimeRange" onchange="changeLiveTimeRange()" style="width: auto;">
-                            <option value="5m" selected>5 min</option>
-                            <option value="15m">15 min</option>
-                            <option value="1h">1 hour</option>
-                            <option value="4h">4 hours</option>
-                            <option value="1d">1 day</option>
-                            <option value="15d">15 days</option>
-                            <option value="30d">30 days</option>
-                            <option value="ytd">YTD</option>
-                            <option value="1y">1 year</option>
-                            <option value="3y">3 years</option>
-                            <option value="all">All time</option>
-                        </select>
+                        <div class="d-flex align-items-center gap-2">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="lockLive">
+                                <label class="form-check-label" for="lockLive">Lock to Global</label>
+                            </div>
+                            <select class="form-select form-select-sm" id="liveTimeRange" onchange="changeLiveTimeRange()" style="width: auto;">
+                                <option value="5m" selected>5 min</option>
+                                <option value="15m">15 min</option>
+                                <option value="1h">1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="1d">1 day</option>
+                                <option value="15d">15 days</option>
+                                <option value="30d">30 days</option>
+                                <option value="ytd">YTD</option>
+                                <option value="1y">1 year</option>
+                                <option value="3y">3 years</option>
+                                <option value="all">All time</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="card-body chart-container" id="liveFeed">
+                    <div class="card-body scrollable-content" id="liveFeed">
                         <div class="text-center">
                             <div class="spinner-border" role="status">
                                 <span class="visually-hidden">Loading...</span>
@@ -204,34 +245,68 @@
             </div>
         </div>
 
-        <!-- Trending Stocks Row -->
+        <!-- Data Explorer -->
         <div class="row">
             <div class="col-12">
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-fire"></i> Trending Stocks</h5>
-                        <select class="form-select form-select-sm" id="trendingTimeRange" onchange="changeTrendingTimeRange()" style="width: auto;">
-                            <option value="5m">5 min</option>
-                            <option value="15m">15 min</option>
-                            <option value="1h" selected>1 hour</option>
-                            <option value="4h">4 hours</option>
-                            <option value="1d">1 day</option>
-                            <option value="15d">15 days</option>
-                            <option value="30d">30 days</option>
-                            <option value="ytd">YTD</option>
-                            <option value="1y">1 year</option>
-                            <option value="3y">3 years</option>
-                            <option value="all">All time</option>
-                        </select>
-                    </div>
-                    <div class="card-body">
-                        <div id="trendingStocks" class="row">
-                            <div class="text-center">
-                                <div class="spinner-border" role="status">
-                                    <span class="visually-hidden">Loading...</span>
-                                </div>
-                                <p class="mt-2">Loading trending data...</p>
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-database"></i> Data Explorer</h5>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-success btn-sm" onclick="exportData('csv')">
+                                    <i class="fas fa-download"></i> CSV
+                                </button>
+                                <button class="btn btn-outline-primary btn-sm" onclick="exportData('json')">
+                                    <i class="fas fa-download"></i> JSON
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="toggleDataExplorer()">
+                                    <i class="fas fa-chevron-down" id="explorerToggleIcon"></i>
+                                </button>
                             </div>
+                        </div>
+                        <div class="mt-2" id="explorerFilters">
+                            <div class="row g-2">
+                                <div class="col-md-2">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Search ticker..." id="tickerFilter">
+                                </div>
+                                <div class="col-md-2">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Search subreddit..." id="subredditFilter">
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Search text..." id="textFilter">
+                                </div>
+                                <div class="col-md-2">
+                                    <select class="form-select form-select-sm" id="sortBy">
+                                        <option value="timestamp">Sort by Time</option>
+                                        <option value="sentiment">Sort by Sentiment</option>
+                                        <option value="subreddit">Sort by Subreddit</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-1">
+                                    <select class="form-select form-select-sm" id="sortOrder">
+                                        <option value="desc">Desc</option>
+                                        <option value="asc">Asc</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <button class="btn btn-primary btn-sm w-100" onclick="loadRawData()">
+                                        <i class="fas fa-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body" id="dataExplorerBody" style="display: none;">
+                        <div class="data-explorer">
+                            <div id="rawDataContainer">
+                                <div class="text-center">
+                                    <p class="text-muted">Click Search to explore the data</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mt-3">
+                            <div id="paginationInfo"></div>
+                            <div id="paginationControls"></div>
                         </div>
                     </div>
                 </div>
@@ -241,15 +316,25 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Global state
         let refreshInterval;
         let isRefreshing = false;
+        let sentimentChart = null;
+        let currentTimeRanges = {
+            global: '1h',
+            chart: '1h',
+            history: '1h',  
+            live: '5m'
+        };
 
         // API endpoints
-        const API_BASE = '';
         const endpoints = {
-            stocks: `${API_BASE}/api/stocks`,
-            trending: `${API_BASE}/api/trending`,
-            live: `${API_BASE}/api/sentiment/live`
+            stocks: '/api/stocks',
+            trending: '/api/trending',
+            live: '/api/sentiment/live',
+            chart: '/api/sentiment/chart',
+            rawData: '/api/raw-data',
+            export: '/api/export'
         };
 
         // Initialize dashboard
@@ -257,74 +342,82 @@
             initChart();
             loadAllData();
             startAutoRefresh();
+            setupLockHandlers();
         });
 
-        function loadAllData() {
-            loadStocks();
-            loadTrending();
-            loadLiveFeed();
-            loadChartData();
+        function setupLockHandlers() {
+            document.getElementById('lockChart').checked = true;
+            document.getElementById('lockHistory').checked = true;
+            document.getElementById('lockLive').checked = true;
         }
 
-        // Time range change handlers
+        function changeGlobalTimeRange() {
+            const globalRange = document.getElementById('globalTimeRange').value;
+            currentTimeRanges.global = globalRange;
+            
+            // Update locked sections
+            if (document.getElementById('lockChart').checked) {
+                document.getElementById('chartTimeRange').value = globalRange;
+                currentTimeRanges.chart = globalRange;
+            }
+            if (document.getElementById('lockHistory').checked) {
+                document.getElementById('historyTimeRange').value = globalRange;
+                currentTimeRanges.history = globalRange;
+            }
+            if (document.getElementById('lockLive').checked) {
+                document.getElementById('liveTimeRange').value = globalRange;
+                currentTimeRanges.live = globalRange;
+            }
+            
+            // Reload all data with preserved time ranges
+            loadAllDataWithCurrentRanges();
+        }
+
         function changeChartTimeRange() {
             const range = document.getElementById('chartTimeRange').value;
-            console.log('Chart time range changed to:', range);
+            currentTimeRanges.chart = range;
             loadChartData(range);
         }
 
-        function changeStocksTimeRange() {
-            const range = document.getElementById('stocksTimeRange').value;
-            console.log('Stocks time range changed to:', range);
-            loadStocks(range);
+        function changeHistoryTimeRange() {
+            const range = document.getElementById('historyTimeRange').value;
+            currentTimeRanges.history = range;
+            loadStockHistory(range);
         }
 
         function changeLiveTimeRange() {
             const range = document.getElementById('liveTimeRange').value;
-            console.log('Live time range changed to:', range);
+            currentTimeRanges.live = range;
             loadLiveFeed(range);
         }
 
-        function changeTrendingTimeRange() {
-            const range = document.getElementById('trendingTimeRange').value;
-            console.log('Trending time range changed to:', range);
-            loadTrending(range);
+        function loadAllData() {
+            loadAllDataWithCurrentRanges();
         }
 
-        function loadStocks(timeRange = '1h') {
+        function loadAllDataWithCurrentRanges() {
+            loadStockHistory(currentTimeRanges.history);
+            loadLiveFeed(currentTimeRanges.live);
+            loadChartData(currentTimeRanges.chart);
+            updateGlobalStats();
+        }
+
+        function loadStockHistory(timeRange = '1h') {
             const url = `${endpoints.stocks}?range=${timeRange}`;
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
-                        showError('Failed to load stocks: ' + data.error);
+                        showError('Failed to load stock history: ' + data.error);
                         return;
                     }
-                    
-                    displayStocks(data.stocks || []);
-                    updateSummaryStats(data.stocks || []);
+                    displayStockHistory(data.stocks || []);
                     updateConnectionStatus(true);
                 })
                 .catch(error => {
-                    console.error('Error loading stocks:', error);
+                    console.error('Error loading stock history:', error);
                     showError('Failed to connect to API');
                     updateConnectionStatus(false);
-                });
-        }
-
-        function loadTrending(timeRange = '1h') {
-            const url = `${endpoints.trending}?range=${timeRange}`;
-            fetch(url)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error('Trending error:', data.error);
-                        return;
-                    }
-                    displayTrending(data.trending || []);
-                })
-                .catch(error => {
-                    console.error('Error loading trending:', error);
                 });
         }
 
@@ -344,127 +437,336 @@
                 });
         }
 
-        function displayStocks(stocks) {
-            const container = document.getElementById('stocksList');
+        function displayStockHistory(stocks) {
+            const container = document.getElementById('stockHistory');
+            
             if (stocks.length === 0) {
-                container.innerHTML = '<div class="text-center text-muted">No stock mentions found in the last hour</div>';
+                container.innerHTML = '<div class="text-center text-muted">No stock data available for this time range.</div>';
                 return;
             }
 
-            let html = '';
-            stocks.slice(0, 10).forEach((stock, index) => {
-                const sentimentClass = getSentimentClass(stock.avg_sentiment);
-                const sentimentIcon = getSentimentIcon(stock.avg_sentiment);
+            const html = stocks.map((stock, index) => {
+                const sentimentClass = getSentimentClass(stock.sentiment_label);
+                const badgeClass = getSentimentBadgeClass(stock.sentiment_label);
                 
-                html += `
-                    <div class="stock-card d-flex justify-content-between align-items-center p-3 mb-2 border rounded">
-                        <div>
-                            <span class="ticker-badge badge bg-primary fs-6">${stock.ticker}</span>
-                            <small class="text-muted ms-2">${stock.top_subreddit}</small>
-                        </div>
-                        <div class="text-end">
-                            <div class="fw-bold ${sentimentClass}">
-                                ${sentimentIcon} ${stock.sentiment_label}
+                return `
+                    <div class="stock-card border rounded p-3 mb-2 bg-white">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <span class="ticker-badge badge bg-primary">${stock.ticker}</span>
+                                    <span class="badge ${badgeClass} ms-2">${stock.sentiment_label}</span>
+                                </h6>
+                                <div class="small text-muted">
+                                    <i class="fas fa-comments"></i> ${stock.mentions} mentions in r/${stock.top_subreddit}
+                                    <br>
+                                    <i class="fas fa-clock"></i> Latest: ${getTimeAgo(stock.latest_mention)}
+                                </div>
                             </div>
-                            <small class="text-muted">
-                                ${stock.mentions} mentions | ${stock.total_engagement} score
-                            </small>
+                            <div class="text-end">
+                                <div class="h6 ${sentimentClass}">${stock.avg_sentiment.toFixed(3)}</div>
+                                <div class="small text-muted">Engagement: ${stock.total_engagement}</div>
+                            </div>
+                        </div>
+                        <div class="progress mt-2" style="height: 4px;">
+                            <div class="progress-bar ${sentimentClass.includes('success') ? 'bg-success' : sentimentClass.includes('danger') ? 'bg-danger' : 'bg-secondary'}" 
+                                 style="width: ${Math.abs(stock.avg_sentiment) * 100}%"></div>
                         </div>
                     </div>
                 `;
-            });
+            }).join('');
+
             container.innerHTML = html;
         }
 
-        function displayTrending(trending) {
-            const container = document.getElementById('trendingStocks');
-            if (trending.length === 0) {
-                container.innerHTML = '<div class="text-center text-muted">No trending stocks found</div>';
-                return;
-            }
-
-            let html = '';
-            trending.forEach(stock => {
-                const sentimentClass = getSentimentClass(stock.avg_sentiment);
-                html += `
-                    <div class="col-md-2 col-sm-4 col-6 mb-3">
-                        <div class="card text-center stock-card">
-                            <div class="card-body py-3">
-                                <h6 class="ticker-badge text-primary">${stock.ticker}</h6>
-                                <div class="small ${sentimentClass}">${stock.sentiment_label}</div>
-                                <div class="small text-muted">${stock.mentions_last_hour} mentions</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-            container.innerHTML = html;
-        }
-
-        function displayLiveFeed(updates) {
+        function displayLiveFeed(liveUpdates) {
             const container = document.getElementById('liveFeed');
-            if (updates.length === 0) {
-                container.innerHTML = '<div class="text-center text-muted">No recent stock mentions</div>';
+            
+            if (liveUpdates.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No recent mentions in this time range.</div>';
                 return;
             }
 
-            let html = '';
-            updates.slice(0, 10).forEach(update => {
-                const sentimentClass = getSentimentClass(update.sentiment_score);
-                const sentimentIcon = getSentimentIcon(update.sentiment_score);
-                const timeAgo = getTimeAgo(update.timestamp);
+            const html = liveUpdates.map(update => {
+                const sentimentClass = getSentimentClass(update.sentiment_label);
+                const tickerBadges = update.tickers.map(ticker => 
+                    `<span class="ticker-badge badge bg-secondary me-1">${ticker}</span>`
+                ).join('');
                 
-                html += `
-                    <div class="live-update">
+                return `
+                    <div class="live-update bg-white rounded p-2 mb-2">
                         <div class="d-flex justify-content-between align-items-start">
                             <div class="flex-grow-1">
-                                <div class="d-flex align-items-center mb-1">
-                                    ${update.tickers.map(ticker => 
-                                        `<span class="ticker-badge badge bg-secondary me-1">${ticker}</span>`
-                                    ).join('')}
-                                    <small class="text-muted ms-2">r/${update.subreddit}</small>
+                                <div class="mb-1">${tickerBadges}</div>
+                                <div class="small mb-1">${update.body_preview}</div>
+                                <div class="small text-muted">
+                                    <i class="fas fa-reddit"></i> r/${update.subreddit} • 
+                                    <span class="${sentimentClass}">${update.sentiment_label}</span> • 
+                                    ${getTimeAgo(update.timestamp)}
                                 </div>
-                                <div class="small text-muted">${update.body_preview}</div>
-                                ${update.reddit_url ? `<a href="${update.reddit_url}" target="_blank" class="small text-primary"><i class="fab fa-reddit"></i> View on Reddit</a>` : ''}
                             </div>
-                            <div class="text-end ms-2">
-                                <div class="small ${sentimentClass}">${sentimentIcon}</div>
-                                <div class="small text-muted">${timeAgo}</div>
+                            <div class="ms-2">
+                                <a href="${update.reddit_url}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                    <i class="fas fa-external-link-alt"></i>
+                                </a>
                             </div>
                         </div>
                     </div>
                 `;
-            });
+            }).join('');
+
             container.innerHTML = html;
         }
 
-        function updateSummaryStats(stocks) {
-            document.getElementById('totalStocks').textContent = stocks.length;
-            
-            let bullish = 0, bearish = 0, trending = 0;
-            stocks.forEach(stock => {
-                if (stock.avg_sentiment > 0.1) bullish++;
-                else if (stock.avg_sentiment < -0.1) bearish++;
-                if (stock.mentions >= 5) trending++;
+        function updateGlobalStats() {
+            // This would aggregate stats from current data
+            // For now, using placeholder values
+            document.getElementById('totalComments').textContent = '116';
+            document.getElementById('uniqueStocks').textContent = '25';
+            document.getElementById('avgSentiment').textContent = '+0.12';
+        }
+
+        function loadChartData(timeRange = '1h') {
+            const url = `${endpoints.chart}?range=${timeRange}`;
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Chart data error:', data.error);
+                        return;
+                    }
+                    updateChart(data.chart_data || []);
+                })
+                .catch(error => {
+                    console.error('Error loading chart data:', error);
+                });
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('sentimentChart').getContext('2d');
+            sentimentChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'minute',
+                                displayFormats: { minute: 'HH:mm' }
+                            },
+                            title: { display: true, text: 'Time' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Sentiment Score' },
+                            min: -1, max: 1
+                        }
+                    },
+                    plugins: {
+                        legend: { display: true, position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                afterBody: function(context) {
+                                    const dataPoint = context[0].raw;
+                                    return [`Subreddit: r/${dataPoint.subreddit}`, `Comment: ${dataPoint.body_preview}`];
+                                }
+                            }
+                        }
+                    },
+                    onClick: function(event, elements) {
+                        if (elements.length > 0) {
+                            const dataPoint = elements[0];
+                            const data = sentimentChart.data.datasets[dataPoint.datasetIndex].data[dataPoint.index];
+                            if (data.reddit_url) {
+                                window.open(data.reddit_url, '_blank');
+                            }
+                        }
+                    }
+                }
             });
+        }
+
+        function updateChart(chartData) {
+            if (!sentimentChart) return;
+
+            const tickerData = {};
+            chartData.forEach(point => {
+                if (!tickerData[point.ticker]) {
+                    tickerData[point.ticker] = [];
+                }
+                tickerData[point.ticker].push({
+                    x: new Date(point.timestamp),
+                    y: point.sentiment_score,
+                    subreddit: point.subreddit,
+                    body_preview: point.body_preview,
+                    reddit_url: point.reddit_url
+                });
+            });
+
+            const sortedTickers = Object.keys(tickerData)
+                .sort((a, b) => tickerData[b].length - tickerData[a].length)
+                .slice(0, 5);
+
+            const datasets = sortedTickers.map((ticker, index) => {
+                const hue = (index * 72) % 360;
+                return {
+                    label: `$${ticker}`,
+                    data: tickerData[ticker],
+                    borderColor: `hsl(${hue}, 70%, 50%)`,
+                    backgroundColor: `hsl(${hue}, 70%, 50%, 0.1)`,
+                    fill: false,
+                    tension: 0.1
+                };
+            });
+
+            sentimentChart.data.datasets = datasets;
+            sentimentChart.update('none');
+        }
+
+        // Data Explorer Functions
+        let currentPage = 1;
+        let explorerExpanded = false;
+
+        function toggleDataExplorer() {
+            const body = document.getElementById('dataExplorerBody');
+            const icon = document.getElementById('explorerToggleIcon');
             
-            document.getElementById('bullishCount').textContent = bullish;
-            document.getElementById('bearishCount').textContent = bearish;
-            document.getElementById('trendingCount').textContent = trending;
+            if (explorerExpanded) {
+                body.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+                explorerExpanded = false;
+            } else {
+                body.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+                explorerExpanded = true;
+            }
         }
 
-        function getSentimentClass(sentiment) {
-            if (sentiment > 0.1) return 'sentiment-bullish';
-            if (sentiment < -0.1) return 'sentiment-bearish';
-            return 'sentiment-neutral';
+        function loadRawData(page = 1) {
+            const params = new URLSearchParams({
+                page: page,
+                limit: 50,
+                range: currentTimeRanges.global,
+                ticker: document.getElementById('tickerFilter').value,
+                subreddit: document.getElementById('subredditFilter').value,
+                search: document.getElementById('textFilter').value,
+                sort: document.getElementById('sortBy').value,
+                order: document.getElementById('sortOrder').value
+            });
+
+            const url = `${endpoints.rawData}?${params}`;
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showError('Failed to load raw data: ' + data.error);
+                        return;
+                    }
+                    displayRawData(data);
+                })
+                .catch(error => {
+                    console.error('Error loading raw data:', error);
+                    showError('Failed to load raw data');
+                });
         }
 
-        function getSentimentIcon(sentiment) {
-            if (sentiment > 0.3) return '<i class="fas fa-arrow-up"></i>';
-            if (sentiment > 0.1) return '<i class="fas fa-arrow-up"></i>';
-            if (sentiment < -0.3) return '<i class="fas fa-arrow-down"></i>';
-            if (sentiment < -0.1) return '<i class="fas fa-arrow-down"></i>';
-            return '<i class="fas fa-minus"></i>';
+        function displayRawData(data) {
+            const container = document.getElementById('rawDataContainer');
+            currentPage = data.pagination.page;
+
+            if (data.data.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No data found matching your criteria.</div>';
+                document.getElementById('paginationInfo').innerHTML = '';
+                document.getElementById('paginationControls').innerHTML = '';
+                return;
+            }
+
+            const tableHtml = `
+                <table class="table table-sm table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Time</th>
+                            <th>Subreddit</th>
+                            <th>Tickers</th>
+                            <th>Sentiment</th>
+                            <th>Comment</th>
+                            <th>Link</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.data.map(row => `
+                            <tr>
+                                <td>${row.created_ago}</td>
+                                <td><span class="badge bg-info">r/${row.subreddit}</span></td>
+                                <td>${row.tickers.map(t => `<span class="badge bg-secondary ticker-badge">${t}</span>`).join(' ')}</td>
+                                <td>
+                                    <span class="badge ${getSentimentBadgeClass(row.sentiment_label)}">${row.sentiment_label}</span>
+                                    <small class="d-block">${row.sentiment_score.toFixed(3)}</small>
+                                </td>
+                                <td class="text-truncate-custom">${row.body}</td>
+                                <td>
+                                    <a href="${row.reddit_url}" target="_blank" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-external-link-alt"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            container.innerHTML = tableHtml;
+
+            // Update pagination info
+            document.getElementById('paginationInfo').innerHTML = 
+                `Showing ${(currentPage - 1) * data.pagination.limit + 1}-${Math.min(currentPage * data.pagination.limit, data.pagination.total_count)} of ${data.pagination.total_count} entries`;
+
+            // Update pagination controls
+            const paginationHtml = `
+                <nav>
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item ${!data.pagination.has_prev ? 'disabled' : ''}">
+                            <button class="page-link" onclick="loadRawData(${currentPage - 1})" ${!data.pagination.has_prev ? 'disabled' : ''}>Previous</button>
+                        </li>
+                        <li class="page-item active">
+                            <span class="page-link">${currentPage}</span>
+                        </li>
+                        <li class="page-item ${!data.pagination.has_next ? 'disabled' : ''}">
+                            <button class="page-link" onclick="loadRawData(${currentPage + 1})" ${!data.pagination.has_next ? 'disabled' : ''}>Next</button>
+                        </li>
+                    </ul>
+                </nav>
+            `;
+
+            document.getElementById('paginationControls').innerHTML = paginationHtml;
+        }
+
+        function exportData(format) {
+            const params = new URLSearchParams({
+                range: currentTimeRanges.global,
+                ticker: document.getElementById('tickerFilter').value,
+                subreddit: document.getElementById('subredditFilter').value,
+                search: document.getElementById('textFilter').value
+            });
+
+            const url = `${endpoints.export}/${format}?${params}`;
+            window.open(url, '_blank');
+        }
+
+        // Utility functions
+        function getSentimentClass(label) {
+            if (label.includes('Bullish')) return 'text-success';
+            if (label.includes('Bearish')) return 'text-danger';
+            return 'text-secondary';
+        }
+
+        function getSentimentBadgeClass(label) {
+            if (label.includes('Bullish')) return 'bg-success';
+            if (label.includes('Bearish')) return 'bg-danger';
+            return 'bg-secondary';
         }
 
         function getTimeAgo(timestamp) {
@@ -477,26 +779,17 @@
             if (diffMins < 1) return 'now';
             if (diffMins < 60) return `${diffMins}m`;
             const diffHours = Math.floor(diffMins / 60);
-            return `${diffHours}h`;
-        }
-
-        function refreshData() {
-            if (isRefreshing) return;
-            
-            isRefreshing = true;
-            const icon = document.getElementById('refreshIcon');
-            icon.classList.add('refresh-indicator');
-            
-            loadAllData();
-            
-            setTimeout(() => {
-                isRefreshing = false;
-                icon.classList.remove('refresh-indicator');
-            }, 2000);
+            if (diffHours < 24) return `${diffHours}h`;
+            const diffDays = Math.floor(diffHours / 24);
+            return `${diffDays}d`;
         }
 
         function startAutoRefresh() {
-            refreshInterval = setInterval(loadAllData, 30000); // Refresh every 30 seconds
+            refreshInterval = setInterval(() => {
+                if (!isRefreshing) {
+                    loadAllDataWithCurrentRanges();
+                }
+            }, 30000);
         }
 
         function updateConnectionStatus(online) {
@@ -517,140 +810,10 @@
             // Could add toast notifications here
         }
 
-        // Chart functionality
-        let sentimentChart = null;
-        const chartColors = {
-            bullish: '#28a745',
-            bearish: '#dc3545',
-            neutral: '#6c757d'
-        };
-
-        function initChart() {
-            const ctx = document.getElementById('sentimentChart').getContext('2d');
-            sentimentChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    datasets: []
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: {
-                                unit: 'minute',
-                                displayFormats: {
-                                    minute: 'HH:mm'
-                                }
-                            },
-                            title: {
-                                display: true,
-                                text: 'Time'
-                            }
-                        },
-                        y: {
-                            title: {
-                                display: true,
-                                text: 'Sentiment Score'
-                            },
-                            min: -1,
-                            max: 1
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                afterBody: function(context) {
-                                    const dataPoint = context[0].raw;
-                                    return [`Subreddit: r/${dataPoint.subreddit}`, `Comment: ${dataPoint.body_preview}`];
-                                }
-                            }
-                        }
-                    },
-                    interaction: {
-                        intersect: false
-                    },
-                    onClick: function(event, elements) {
-                        if (elements.length > 0) {
-                            const dataPoint = elements[0];
-                            const data = sentimentChart.data.datasets[dataPoint.datasetIndex].data[dataPoint.index];
-                            if (data.reddit_url) {
-                                window.open(data.reddit_url, '_blank');
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        function loadChartData(timeRange = '1h') {
-            const url = `/api/sentiment/chart?range=${timeRange}`;
-            fetch(url)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error('Chart data error:', data.error);
-                        return;
-                    }
-                    updateChart(data.chart_data || []);
-                })
-                .catch(error => {
-                    console.error('Error loading chart data:', error);
-                });
-        }
-
-        function updateChart(chartData) {
-            if (!sentimentChart) return;
-
-            // Group data by ticker
-            const tickerData = {};
-            chartData.forEach(point => {
-                if (!tickerData[point.ticker]) {
-                    tickerData[point.ticker] = [];
-                }
-                tickerData[point.ticker].push({
-                    x: new Date(point.timestamp),
-                    y: point.sentiment_score,
-                    subreddit: point.subreddit,
-                    body_preview: point.body_preview,
-                    reddit_url: point.reddit_url
-                });
-            });
-
-            // Create datasets for top 5 most active tickers
-            const sortedTickers = Object.keys(tickerData)
-                .sort((a, b) => tickerData[b].length - tickerData[a].length)
-                .slice(0, 5);
-
-            const datasets = sortedTickers.map((ticker, index) => {
-                const hue = (index * 72) % 360; // Distribute colors evenly
-                return {
-                    label: `$${ticker}`,
-                    data: tickerData[ticker],
-                    borderColor: `hsl(${hue}, 70%, 50%)`,
-                    backgroundColor: `hsl(${hue}, 70%, 50%, 0.1)`,
-                    fill: false,
-                    tension: 0.1
-                };
-            });
-
-            sentimentChart.data.datasets = datasets;
-            sentimentChart.update('none');
-        }
-
-        // Cleanup on page unload
+        // Cleanup
         window.addEventListener('beforeunload', function() {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-            }
-            if (sentimentChart) {
-                sentimentChart.destroy();
-            }
+            if (refreshInterval) clearInterval(refreshInterval);
+            if (sentimentChart) sentimentChart.destroy();
         });
     </script>
 </body>

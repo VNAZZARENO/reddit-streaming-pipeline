@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request, Response
 from flask_cors import CORS
 from datetime import datetime, timedelta
 import logging
@@ -8,6 +8,7 @@ import traceback
 import subprocess
 import csv
 import io
+import math
 
 app = Flask(__name__)
 CORS(app)
@@ -509,6 +510,215 @@ def get_sentiment_label(score):
         return 'Bearish' if score < -0.3 else 'Slightly Bearish'
     else:
         return 'Neutral'
+
+@app.route('/api/raw-data')
+def get_raw_data():
+    """Get raw comment data with pagination and filtering"""
+    try:
+        # Get query parameters
+        page = int(request.args.get('page', 1))
+        limit = min(int(request.args.get('limit', 50)), 1000)  # Max 1000 per page
+        time_range = request.args.get('range', '1d')
+        ticker_filter = request.args.get('ticker', '')
+        subreddit_filter = request.args.get('subreddit', '')
+        search_term = request.args.get('search', '')
+        sort_by = request.args.get('sort', 'timestamp')
+        sort_order = request.args.get('order', 'desc')
+        
+        # Calculate time delta
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        # Build query with filters
+        query_parts = [f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}'"]
+        
+        if subreddit_filter:
+            query_parts.append(f"AND subreddit = '{subreddit_filter}'")
+            
+        query_parts.append("ALLOW FILTERING;")
+        query = " ".join(query_parts)
+        
+        data_lines = query_cassandra_direct(query)
+        
+        raw_data = []
+        for line in data_lines:
+            try:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) >= 5:
+                    subreddit, body, sentiment_str, timestamp_str, permalink = parts[:5]
+                    
+                    # Apply ticker filter
+                    tickers = extract_tickers_from_text(body)
+                    if ticker_filter and ticker_filter.upper() not in [t.upper() for t in tickers]:
+                        continue
+                        
+                    # Apply search filter
+                    if search_term and search_term.lower() not in body.lower():
+                        continue
+                    
+                    sentiment = safe_float(sentiment_str.strip())
+                    timestamp_dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f+0000')
+                    
+                    raw_data.append({
+                        'id': f"{timestamp_str}_{subreddit}_{len(raw_data)}",
+                        'subreddit': subreddit,
+                        'body': body,
+                        'tickers': tickers,
+                        'sentiment_score': sentiment,
+                        'sentiment_label': get_sentiment_label(sentiment),
+                        'timestamp': timestamp_dt.isoformat(),
+                        'reddit_url': f"https://reddit.com{permalink}",
+                        'created_ago': get_time_ago_text(timestamp_dt)
+                    })
+                    
+            except Exception as parse_error:
+                continue
+        
+        # Sort data
+        reverse_sort = sort_order.lower() == 'desc'
+        if sort_by == 'timestamp':
+            raw_data.sort(key=lambda x: x['timestamp'], reverse=reverse_sort)
+        elif sort_by == 'sentiment':
+            raw_data.sort(key=lambda x: x['sentiment_score'], reverse=reverse_sort)
+        elif sort_by == 'subreddit':
+            raw_data.sort(key=lambda x: x['subreddit'], reverse=reverse_sort)
+        
+        # Pagination
+        total_count = len(raw_data)
+        total_pages = math.ceil(total_count / limit)
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_data = raw_data[start_idx:end_idx]
+        
+        return jsonify({
+            'data': paginated_data,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total_count': total_count,
+                'total_pages': total_pages,
+                'has_next': page < total_pages,
+                'has_prev': page > 1
+            },
+            'filters': {
+                'range': time_range,
+                'ticker': ticker_filter,
+                'subreddit': subreddit_filter,
+                'search': search_term,
+                'sort': sort_by,
+                'order': sort_order
+            },
+            'last_updated': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_raw_data: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/export/<format>')
+def export_data(format):
+    """Export data in CSV or JSON format"""
+    try:
+        # Get all data (no pagination for export)
+        time_range = request.args.get('range', '1d')
+        ticker_filter = request.args.get('ticker', '')
+        subreddit_filter = request.args.get('subreddit', '')
+        search_term = request.args.get('search', '')
+        
+        # Get data using same logic as raw-data endpoint
+        time_delta = get_time_delta_from_range(time_range)
+        time_ago = datetime.utcnow() - time_delta
+        timestamp_str = time_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        query_parts = [f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp, permalink FROM comments WHERE api_timestamp > '{timestamp_str}'"]
+        
+        if subreddit_filter:
+            query_parts.append(f"AND subreddit = '{subreddit_filter}'")
+            
+        query_parts.append("ALLOW FILTERING;")
+        query = " ".join(query_parts)
+        
+        data_lines = query_cassandra_direct(query)
+        
+        export_data = []
+        for line in data_lines:
+            try:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) >= 5:
+                    subreddit, body, sentiment_str, timestamp_str, permalink = parts[:5]
+                    
+                    tickers = extract_tickers_from_text(body)
+                    if ticker_filter and ticker_filter.upper() not in [t.upper() for t in tickers]:
+                        continue
+                        
+                    if search_term and search_term.lower() not in body.lower():
+                        continue
+                    
+                    sentiment = safe_float(sentiment_str.strip())
+                    timestamp_dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S.%f+0000')
+                    
+                    export_data.append({
+                        'subreddit': subreddit,
+                        'body': body,
+                        'tickers': '|'.join(tickers) if tickers else '',
+                        'sentiment_score': sentiment,
+                        'sentiment_label': get_sentiment_label(sentiment),
+                        'timestamp': timestamp_dt.isoformat(),
+                        'reddit_url': f"https://reddit.com{permalink}"
+                    })
+                    
+            except Exception as parse_error:
+                continue
+        
+        if format.lower() == 'csv':
+            output = io.StringIO()
+            if export_data:
+                writer = csv.DictWriter(output, fieldnames=export_data[0].keys())
+                writer.writeheader()
+                writer.writerows(export_data)
+            
+            response = Response(
+                output.getvalue(),
+                mimetype='text/csv',
+                headers={
+                    'Content-Disposition': f'attachment; filename=reddit_sentiment_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                }
+            )
+            return response
+            
+        elif format.lower() == 'json':
+            response = Response(
+                json.dumps(export_data, indent=2),
+                mimetype='application/json',
+                headers={
+                    'Content-Disposition': f'attachment; filename=reddit_sentiment_data_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+                }
+            )
+            return response
+            
+        else:
+            return jsonify({'error': 'Unsupported format. Use csv or json'}), 400
+            
+    except Exception as e:
+        logger.error(f"Error in export_data: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+def get_time_ago_text(timestamp_dt):
+    """Convert timestamp to human-readable 'time ago' format"""
+    now = datetime.utcnow()
+    diff = now - timestamp_dt
+    
+    if diff.days > 0:
+        return f"{diff.days}d ago"
+    elif diff.seconds > 3600:
+        hours = diff.seconds // 3600
+        return f"{hours}h ago"
+    elif diff.seconds > 60:
+        minutes = diff.seconds // 60
+        return f"{minutes}m ago"
+    else:
+        return "now"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
