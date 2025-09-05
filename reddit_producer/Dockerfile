@@ -6,4 +6,4 @@ COPY . .
 
 RUN pip install -r requirements.txt
 
-CMD ["python", "reddit_producer.py"]
+CMD ["python", "-u", "reddit_producer.py"]

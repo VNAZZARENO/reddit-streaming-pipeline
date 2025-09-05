@@ -32,8 +32,23 @@ def query_cassandra_direct(query):
             logger.error("No Cassandra pod found")
             return []
         
-        # Execute CQL query
-        cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-e', query]
+        # Split query and execute statements separately if needed
+        statements = [stmt.strip() for stmt in query.split(';') if stmt.strip()]
+        
+        # First execute USE statement if present
+        if statements and statements[0].upper().startswith('USE'):
+            use_cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-k', 'reddit']
+            # For USE statement, we switch keyspace in connection
+            if len(statements) > 1:
+                # Execute the main query in the reddit keyspace
+                main_query = statements[1]
+                cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-k', 'reddit', '-e', main_query]
+            else:
+                return []
+        else:
+            # Execute the full query as is
+            cmd = ['kubectl', 'exec', pod_name, '-n', 'redditpipeline', '-c', 'cassandra', '--', 'cqlsh', '-e', query]
+        
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
         if result.returncode != 0:
@@ -72,6 +87,62 @@ def dashboard():
     """Main dashboard page"""
     return render_template('index.html')
 
+@app.route('/api/debug/subreddits')
+def get_subreddits():
+    """Debug endpoint to see which subreddits are actually being fetched"""
+    try:
+        # Query to see which subreddits have data
+        query = "USE reddit; SELECT DISTINCT subreddit, COUNT(*) as comment_count FROM comments GROUP BY subreddit;"
+        
+        data_lines = query_cassandra_direct(query)
+        
+        subreddits = []
+        for line in data_lines:
+            try:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) >= 2:
+                    subreddit, count_str = parts[0], parts[1]
+                    count = int(count_str.strip()) if count_str.strip().isdigit() else 0
+                    subreddits.append({
+                        'subreddit': subreddit,
+                        'comment_count': count
+                    })
+            except:
+                continue
+        
+        # Also get recent comments to see what's actually being processed
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        timestamp_str = one_hour_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
+        
+        recent_query = f"USE reddit; SELECT subreddit, body, api_timestamp FROM comments WHERE api_timestamp > '{timestamp_str}' LIMIT 10 ALLOW FILTERING;"
+        
+        recent_lines = query_cassandra_direct(recent_query)
+        recent_comments = []
+        
+        for line in recent_lines:
+            try:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) >= 3:
+                    subreddit, body, timestamp = parts[:3]
+                    recent_comments.append({
+                        'subreddit': subreddit,
+                        'body': body[:100] + '...' if len(body) > 100 else body,
+                        'timestamp': timestamp
+                    })
+            except:
+                continue
+        
+        return jsonify({
+            'all_subreddits': sorted(subreddits, key=lambda x: x['comment_count'], reverse=True),
+            'recent_comments_sample': recent_comments,
+            'total_subreddits': len(subreddits),
+            'last_updated': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in get_subreddits: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/stocks')
 def get_stocks():
     """Get all stocks with recent sentiment data from REAL Reddit data"""
@@ -80,13 +151,7 @@ def get_stocks():
         two_hours_ago = datetime.utcnow() - timedelta(hours=2)
         timestamp_str = two_hours_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
         
-        query = f"""
-        USE reddit;
-        SELECT subreddit, body, sentiment_score, upvotes, downvotes, api_timestamp 
-        FROM comments 
-        WHERE api_timestamp > '{timestamp_str}' 
-        ALLOW FILTERING;
-        """
+        query = f"USE reddit; SELECT subreddit, body, sentiment_score, upvotes, downvotes, api_timestamp FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
         data_lines = query_cassandra_direct(query)
         
@@ -166,13 +231,7 @@ def get_trending():
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
         timestamp_str = one_hour_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
         
-        query = f"""
-        USE reddit;
-        SELECT body, sentiment_score
-        FROM comments 
-        WHERE api_timestamp > '{timestamp_str}'
-        ALLOW FILTERING;
-        """
+        query = f"USE reddit; SELECT body, sentiment_score FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
         data_lines = query_cassandra_direct(query)
         
@@ -226,13 +285,7 @@ def get_live_sentiment():
         ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
         timestamp_str = ten_minutes_ago.strftime('%Y-%m-%d %H:%M:%S+0000')
         
-        query = f"""
-        USE reddit;
-        SELECT subreddit, body, sentiment_score, api_timestamp
-        FROM comments 
-        WHERE api_timestamp > '{timestamp_str}'
-        ALLOW FILTERING;
-        """
+        query = f"USE reddit; SELECT subreddit, body, sentiment_score, api_timestamp FROM comments WHERE api_timestamp > '{timestamp_str}' ALLOW FILTERING;"
         
         data_lines = query_cassandra_direct(query)
         

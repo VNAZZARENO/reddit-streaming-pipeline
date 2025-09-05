@@ -4,6 +4,20 @@ from kafka import KafkaProducer
 import configparser
 import praw
 import threading
+import logging
+import sys
+
+# Configure logging with unbuffered output
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s', 
+    stream=sys.stdout,
+    force=True
+)
+logger = logging.getLogger(__name__)
+
+# Ensure stdout is unbuffered
+sys.stdout.flush()
 
 threads = []
 # Financial subreddits focused on stock discussions (most active ones)
@@ -74,13 +88,19 @@ def detect_stock_tickers(text: str) -> list[str]:
 class RedditProducer:
 
     def __init__(self, subreddit_list: list[str], cred_file: str="secrets/credentials.cfg"):
-
+        logger.info(f"Initializing Reddit producer with subreddits: {subreddit_list}")
         self.subreddit_list = subreddit_list
+        
+        logger.info("Getting Reddit client...")
         self.reddit = self.__get_reddit_client__(cred_file)
+        logger.info(f"Reddit client authenticated as: {self.reddit.user.me()}")
+        
+        logger.info("Connecting to Kafka...")
         self.producer = KafkaProducer(bootstrap_servers=['kafkaservice:9092'],
                             value_serializer=lambda x:
                             dumps(x).encode('utf-8')
                         )
+        logger.info("Kafka producer initialized successfully")
 
 
     def __get_reddit_client__(self, cred_file) -> praw.Reddit:
@@ -92,6 +112,8 @@ class RedditProducer:
             client_id: str = config.get("reddit", "client_id")
             client_secret: str = config.get("reddit", "client_secret")
             user_agent: str = config.get("reddit", "user_agent")
+            username: str = config.get("reddit", "username")
+            password: str = config.get("reddit", "password")
         except configparser.NoSectionError:
             raise ValueError("The config file does not contain a reddit credential section.")
         except configparser.NoOptionError as e:
@@ -100,19 +122,27 @@ class RedditProducer:
         return praw.Reddit(
             user_agent = user_agent,
             client_id = client_id,
-            client_secret = client_secret
+            client_secret = client_secret,
+            username = username,
+            password = password
         )
 
 
     def start_stream(self, subreddit_name) -> None:
+        logger.info(f"Starting stream for subreddit: {subreddit_name}")
         subreddit = self.reddit.subreddit(subreddit_name)
         comment: praw.models.Comment
         stock_comment_count = 0
         total_comment_count = 0
         
+        logger.info(f"Beginning comment stream for r/{subreddit_name}...")
         for comment in subreddit.stream.comments(skip_existing=True):
             try:
                 total_comment_count += 1
+                
+                # Log every 100 comments processed to show activity
+                if total_comment_count % 100 == 0:
+                    logger.info(f"Processed {total_comment_count} comments, found {stock_comment_count} with stocks")
                 
                 # Skip deleted/removed comments
                 if comment.body in ['[deleted]', '[removed]']:
@@ -123,6 +153,7 @@ class RedditProducer:
                 
                 # Only process comments that mention stocks (filter noise)
                 if mentioned_tickers:
+                    logger.info(f"Found stock comment in r/{subreddit_name}: {mentioned_tickers} - {comment.body[:50]}...")
                     # Optional: Filter by engagement (comment score) to focus on meaningful discussions
                     comment_score = comment.ups - comment.downs
                     
@@ -144,6 +175,7 @@ class RedditProducer:
                     }
                     
                     self.producer.send("redditcomments", value=comment_json)
+                    logger.info(f"Sent to Kafka: {mentioned_tickers} from r/{subreddit_name}")
                     
                     # Highlight high-engagement stock discussions
                     engagement_icon = "🔥" if comment_score >= 5 else "📈"
@@ -158,15 +190,21 @@ class RedditProducer:
                 print(f"❌ Error in {subreddit_name}:", str(e))
     
     def start_streaming_threads(self):
+        logger.info(f"Starting streaming threads for {len(self.subreddit_list)} subreddits")
         for subreddit_name in self.subreddit_list:
+            logger.info(f"Starting thread for r/{subreddit_name}")
             thread = threading.Thread(target=self.start_stream, args=(subreddit_name,))
             thread.start()
             threads.append(thread)
         
+        logger.info(f"All {len(threads)} threads started, waiting for completion...")
         for thread in threads:
             thread.join()
 
 
 if __name__ == "__main__":
+    logger.info("=== Reddit Financial Sentiment Producer Starting ===")
+    logger.info(f"Target subreddits: {financial_subreddit_list}")
+    
     reddit_producer = RedditProducer(financial_subreddit_list)
     reddit_producer.start_streaming_threads()
