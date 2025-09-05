@@ -555,25 +555,55 @@
                             type: 'time',
                             time: {
                                 unit: 'minute',
-                                displayFormats: { minute: 'HH:mm' }
+                                displayFormats: { 
+                                    minute: 'HH:mm',
+                                    hour: 'HH:mm',
+                                    day: 'MM/DD'
+                                }
                             },
-                            title: { display: true, text: 'Time' }
+                            title: { display: true, text: 'Time' },
+                            adapters: {
+                                date: {
+                                    locale: 'en'
+                                }
+                            }
                         },
                         y: {
                             title: { display: true, text: 'Sentiment Score' },
-                            min: -1, max: 1
+                            min: -1, 
+                            max: 1,
+                            grid: {
+                                color: 'rgba(0,0,0,0.1)'
+                            }
                         }
                     },
                     plugins: {
-                        legend: { display: true, position: 'top' },
+                        legend: { 
+                            display: true, 
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                pointStyle: 'circle'
+                            }
+                        },
                         tooltip: {
+                            mode: 'nearest',
+                            intersect: false,
                             callbacks: {
+                                title: function(context) {
+                                    const dataPoint = context[0];
+                                    return `$${dataPoint.dataset.label.replace('$', '')} at ${new Date(dataPoint.parsed.x).toLocaleTimeString()}`;
+                                },
                                 afterBody: function(context) {
                                     const dataPoint = context[0].raw;
                                     return [`Subreddit: r/${dataPoint.subreddit}`, `Comment: ${dataPoint.body_preview}`];
                                 }
                             }
                         }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        intersect: false
                     },
                     onClick: function(event, elements) {
                         if (elements.length > 0) {
@@ -592,12 +622,20 @@
             if (!sentimentChart) return;
 
             const tickerData = {};
+            let minTime = null;
+            let maxTime = null;
+
             chartData.forEach(point => {
                 if (!tickerData[point.ticker]) {
                     tickerData[point.ticker] = [];
                 }
+                
+                const timestamp = new Date(point.timestamp);
+                if (!minTime || timestamp < minTime) minTime = timestamp;
+                if (!maxTime || timestamp > maxTime) maxTime = timestamp;
+                
                 tickerData[point.ticker].push({
-                    x: new Date(point.timestamp),
+                    x: timestamp,
                     y: point.sentiment_score,
                     subreddit: point.subreddit,
                     body_preview: point.body_preview,
@@ -605,24 +643,49 @@
                 });
             });
 
+            // Show top 8 tickers instead of 5 for better representation
             const sortedTickers = Object.keys(tickerData)
                 .sort((a, b) => tickerData[b].length - tickerData[a].length)
-                .slice(0, 5);
+                .slice(0, 8);
 
             const datasets = sortedTickers.map((ticker, index) => {
-                const hue = (index * 72) % 360;
+                const hue = (index * 45) % 360;
                 return {
                     label: `$${ticker}`,
                     data: tickerData[ticker],
                     borderColor: `hsl(${hue}, 70%, 50%)`,
                     backgroundColor: `hsl(${hue}, 70%, 50%, 0.1)`,
                     fill: false,
-                    tension: 0.1
+                    tension: 0.1,
+                    pointRadius: 3,
+                    pointHoverRadius: 6
                 };
             });
 
             sentimentChart.data.datasets = datasets;
-            sentimentChart.update('none');
+            
+            // Update time axis to show full range
+            if (minTime && maxTime) {
+                sentimentChart.options.scales.x.min = minTime.getTime();
+                sentimentChart.options.scales.x.max = maxTime.getTime();
+                
+                // Adjust time unit based on time range
+                const timeDiff = maxTime - minTime;
+                const hoursDiff = timeDiff / (1000 * 60 * 60);
+                
+                if (hoursDiff < 2) {
+                    sentimentChart.options.scales.x.time.unit = 'minute';
+                    sentimentChart.options.scales.x.time.displayFormats.minute = 'HH:mm';
+                } else if (hoursDiff < 48) {
+                    sentimentChart.options.scales.x.time.unit = 'hour';
+                    sentimentChart.options.scales.x.time.displayFormats.hour = 'HH:mm';
+                } else {
+                    sentimentChart.options.scales.x.time.unit = 'day';
+                    sentimentChart.options.scales.x.time.displayFormats.day = 'MM/DD';
+                }
+            }
+            
+            sentimentChart.update('active');
         }
 
         // Data Explorer Functions
