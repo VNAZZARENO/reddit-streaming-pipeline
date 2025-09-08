@@ -527,14 +527,27 @@
         }
 
         function loadChartData(timeRange = '1h') {
-            const url = `${endpoints.chart}?range=${timeRange}`;
-            fetch(url)
+            // Add cache-busting timestamp to force fresh data
+            const timestamp = new Date().getTime();
+            const url = `${endpoints.chart}?range=${timeRange}&_t=${timestamp}`;
+            
+            console.log('Loading chart data for range:', timeRange);
+            
+            fetch(url, { 
+                cache: 'no-cache',
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            })
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
                         console.error('Chart data error:', data.error);
                         return;
                     }
+                    console.log('Received chart data points:', data.chart_data.length);
+                    console.log('Latest data points:', data.chart_data.slice(-5).map(p => `${p.ticker} at ${p.timestamp}`));
                     updateChart(data.chart_data || []);
                 })
                 .catch(error => {
@@ -561,12 +574,7 @@
                                     day: 'MM/DD'
                                 }
                             },
-                            title: { display: true, text: 'Time' },
-                            adapters: {
-                                date: {
-                                    locale: 'en'
-                                }
-                            }
+                            title: { display: true, text: 'Time' }
                         },
                         y: {
                             title: { display: true, text: 'Sentiment Score' },
@@ -625,6 +633,8 @@
             let minTime = null;
             let maxTime = null;
 
+            console.log('Processing chart data points:', chartData.length);
+
             chartData.forEach(point => {
                 if (!tickerData[point.ticker]) {
                     tickerData[point.ticker] = [];
@@ -643,10 +653,30 @@
                 });
             });
 
-            // Show top 8 tickers instead of 5 for better representation
-            const sortedTickers = Object.keys(tickerData)
-                .sort((a, b) => tickerData[b].length - tickerData[a].length)
-                .slice(0, 8);
+            console.log('Tickers found:', Object.keys(tickerData));
+
+            // Get most mentioned tickers (by count)
+            const byMentions = Object.keys(tickerData)
+                .sort((a, b) => tickerData[b].length - tickerData[a].length);
+            
+            // Get most recent tickers (by latest timestamp)
+            const byRecency = Object.keys(tickerData)
+                .sort((a, b) => {
+                    const latestA = Math.max(...tickerData[a].map(p => p.x.getTime()));
+                    const latestB = Math.max(...tickerData[b].map(p => p.x.getTime()));
+                    return latestB - latestA;
+                });
+            
+            // Combine: show top 5 by mentions + top 5 recent (remove duplicates)
+            const selectedTickers = new Set();
+            byMentions.slice(0, 5).forEach(t => selectedTickers.add(t));
+            byRecency.slice(0, 5).forEach(t => selectedTickers.add(t));
+            
+            const sortedTickers = Array.from(selectedTickers).slice(0, 10);
+            
+            console.log('Most mentioned tickers:', byMentions.slice(0, 5));
+            console.log('Most recent tickers:', byRecency.slice(0, 5));
+            console.log('Selected tickers for chart:', sortedTickers);
 
             const datasets = sortedTickers.map((ticker, index) => {
                 const hue = (index * 45) % 360;
